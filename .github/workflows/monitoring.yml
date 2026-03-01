@@ -1,0 +1,414 @@
+name: 🔍 Monitoring & Health Checks
+
+on:
+  schedule:
+    # Run health checks every 15 minutes
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/monitoring.yml'
+
+env:
+  PRODUCTION_API_URL: ${{ secrets.PRODUCTION_API_URL || 'https://api.job-queue-system.com' }}
+  STAGING_API_URL: ${{ secrets.STAGING_API_URL || 'https://staging-api.job-queue-system.com' }}
+
+jobs:
+  # Health Check Job
+  health-check:
+    name: 🏥 Health Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    strategy:
+      matrix:
+        environment:
+          - name: 'production'
+            url: ${{ secrets.PRODUCTION_API_URL || 'https://api.job-queue-system.com' }}
+          - name: 'staging'
+            url: ${{ secrets.STAGING_API_URL || 'https://staging-api.job-queue-system.com' }}
+
+    steps:
+    - name: 📁 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🏥 API Health Check
+      run: |
+        echo "🔍 Checking ${{ matrix.environment.name }} API health..."
+        
+        # Health endpoint check
+        HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${{ matrix.environment.url }}/health" || echo "000")
+        echo "Health endpoint status: $HEALTH_STATUS"
+        
+        if [ "$HEALTH_STATUS" != "200" ]; then
+          echo "❌ Health check failed for ${{ matrix.environment.name }}"
+          exit 1
+        fi
+        
+        # API response time check
+        RESPONSE_TIME=$(curl -w "@-" -s -o /dev/null "${{ matrix.environment.url }}/health" <<< "time_total=%{time_total}")
+        echo "Response time: $RESPONSE_TIME seconds"
+        
+        # Extract numeric value for comparison
+        RESPONSE_NUMERIC=$(echo "$RESPONSE_TIME" | grep -oE "[0-9]+\.[0-9]+")
+        
+        # Check if response time is under 2 seconds
+        if [ "$(echo "$RESPONSE_NUMERIC > 2" | bc -l 2>/dev/null || echo "0")" = "1" ]; then
+          echo "⚠️ Slow response time detected: $RESPONSE_TIME seconds"
+          echo "SLOW_RESPONSE=true" >> $GITHUB_ENV
+        else
+          echo "✅ Response time OK: $RESPONSE_TIME seconds"
+        fi
+
+    - name: 🔍 Database Connection Check
+      run: |
+        echo "🔍 Checking database connectivity..."
+        
+        DB_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${{ matrix.environment.url }}/health/db" || echo "000")
+        echo "Database health status: $DB_STATUS"
+        
+        if [ "$DB_STATUS" != "200" ]; then
+          echo "❌ Database connection failed for ${{ matrix.environment.name }}"
+          exit 1
+        fi
+        
+        echo "✅ Database connection OK"
+
+    - name: 🔍 Redis Connection Check
+      run: |
+        echo "🔍 Checking Redis connectivity..."
+        
+        REDIS_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${{ matrix.environment.url }}/health/redis" || echo "000")
+        echo "Redis health status: $REDIS_STATUS"
+        
+        if [ "$REDIS_STATUS" != "200" ]; then
+          echo "❌ Redis connection failed for ${{ matrix.environment.name }}"
+          exit 1
+        fi
+        
+        echo "✅ Redis connection OK"
+
+    - name: 🔍 Queue Health Check
+      run: |
+        echo "🔍 Checking queue system health..."
+        
+        QUEUE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${{ matrix.environment.url }}/health/queue" || echo "000")
+        echo "Queue health status: $QUEUE_STATUS"
+        
+        if [ "$QUEUE_STATUS" != "200" ]; then
+          echo "❌ Queue system unhealthy for ${{ matrix.environment.name }}"
+          exit 1
+        fi
+        
+        echo "✅ Queue system OK"
+
+    - name: 📊 Performance Metrics Collection
+      if: always()
+      run: |
+        echo "📊 Collecting performance metrics..."
+        
+        # Collect system metrics
+        METRICS_RESPONSE=$(curl -s "${{ matrix.environment.url }}/metrics" || echo "Failed")
+        echo "Metrics response: $METRICS_RESPONSE"
+        
+        # Store metrics for analysis
+        echo "$METRICS_RESPONSE" > metrics-${{ matrix.environment.name }}.json
+        
+        # Extract key metrics
+        if [[ "$METRICS_RESPONSE" != "Failed" ]]; then
+          ACTIVE_TASKS=$(echo "$METRICS_RESPONSE" | jq -r '.active_tasks // "N/A"')
+          QUEUE_SIZE=$(echo "$METRICS_RESPONSE" | jq -r '.queue_size // "N/A"')
+          WORKERS_CONNECTED=$(echo "$METRICS_RESPONSE" | jq -r '.workers_connected // "N/A"')
+          
+          echo "📈 Key Metrics for ${{ matrix.environment.name }}:"
+          echo "  - Active Tasks: $ACTIVE_TASKS"
+          echo "  - Queue Size: $QUEUE_SIZE"
+          echo "  - Workers Connected: $WORKERS_CONNECTED"
+          
+          # Set alert thresholds
+          if [[ "$QUEUE_SIZE" =~ ^[0-9]+$ ]] && [ "$QUEUE_SIZE" -gt 100 ]; then
+            echo "QUEUE_ALERT=true" >> $GITHUB_ENV
+            echo "⚠️ High queue size detected: $QUEUE_SIZE"
+          fi
+          
+          if [[ "$WORKERS_CONNECTED" =~ ^[0-9]+$ ]] && [ "$WORKERS_CONNECTED" -eq 0 ]; then
+            echo "WORKER_ALERT=true" >> $GITHUB_ENV
+            echo "⚠️ No workers connected!"
+          fi
+        fi
+
+    - name: 📤 Upload metrics
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: metrics-${{ matrix.environment.name }}
+        path: metrics-${{ matrix.environment.name }}.json
+
+  # Load Testing
+  load-test:
+    name: 📈 Load Test
+    runs-on: ubuntu-latest
+    needs: health-check
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+
+    steps:
+    - name: 📁 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 📦 Install k6
+      run: |
+        sudo gpg -k
+        sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+        echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+        sudo apt-get update
+        sudo apt-get install k6
+
+    - name: 📈 Run load test
+      run: |
+        cat << 'EOF' > loadtest.js
+        import http from 'k6/http';
+        import { check, sleep } from 'k6';
+        
+        export const options = {
+          vus: 10,
+          duration: '30s',
+          thresholds: {
+            http_req_duration: ['p(95)<2000'],
+            http_req_failed: ['rate<0.05'],
+          },
+        };
+        
+        const BASE_URL = __ENV.API_URL || 'https://api.job-queue-system.com';
+        
+        export default function() {
+          // Test health endpoint
+          const healthResponse = http.get(`${BASE_URL}/health`);
+          check(healthResponse, {
+            'health check status is 200': (r) => r.status === 200,
+            'health check response time < 500ms': (r) => r.timings.duration < 500,
+          });
+          
+          // Test tasks endpoint (if authenticated)
+          const tasksResponse = http.get(`${BASE_URL}/api/v1/tasks`);
+          check(tasksResponse, {
+            'tasks endpoint accessible': (r) => [200, 401].includes(r.status),
+          });
+          
+          sleep(1);
+        }
+        EOF
+        
+        # Run load test on staging first
+        echo "🔍 Running load test on staging..."
+        API_URL="${{ env.STAGING_API_URL }}" k6 run loadtest.js
+        
+        sleep 10
+        
+        # Run lighter load test on production
+        echo "🔍 Running load test on production..."
+        API_URL="${{ env.PRODUCTION_API_URL }}" k6 run --vus 5 --duration 15s loadtest.js
+
+  # SSL Certificate Check
+  ssl-check:
+    name: 🔒 SSL Certificate Check
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 🔒 Check SSL certificates
+      run: |
+        echo "🔍 Checking SSL certificates..."
+        
+        for url in "${{ env.PRODUCTION_API_URL }}" "${{ env.STAGING_API_URL }}"; do
+          if [[ "$url" == https://* ]]; then
+            DOMAIN=$(echo "$url" | sed 's|https://||' | sed 's|/.*||')
+            echo "📋 Checking certificate for: $DOMAIN"
+            
+            # Get certificate expiry
+            CERT_INFO=$(echo | openssl s_client -servername "$DOMAIN" -connect "$DOMAIN:443" 2>/dev/null | openssl x509 -noout -dates)
+            EXPIRY_DATE=$(echo "$CERT_INFO" | grep 'notAfter' | cut -d= -f2)
+            
+            echo "Certificate expires: $EXPIRY_DATE"
+            
+            # Check if certificate expires in less than 30 days
+            EXPIRY_TIMESTAMP=$(date -d "$EXPIRY_DATE" +%s)
+            CURRENT_TIMESTAMP=$(date +%s)
+            DAYS_UNTIL_EXPIRY=$(( ($EXPIRY_TIMESTAMP - $CURRENT_TIMESTAMP) / 86400 ))
+            
+            echo "Days until expiry: $DAYS_UNTIL_EXPIRY"
+            
+            if [ "$DAYS_UNTIL_EXPIRY" -lt 30 ]; then
+              echo "SSL_EXPIRY_ALERT=true" >> $GITHUB_ENV
+              echo "⚠️ SSL certificate for $DOMAIN expires in $DAYS_UNTIL_EXPIRY days!"
+            elif [ "$DAYS_UNTIL_EXPIRY" -lt 7 ]; then
+              echo "SSL_CRITICAL_ALERT=true" >> $GITHUB_ENV
+              echo "🚨 SSL certificate for $DOMAIN expires in $DAYS_UNTIL_EXPIRY days! CRITICAL!"
+            else
+              echo "✅ SSL certificate for $DOMAIN is valid for $DAYS_UNTIL_EXPIRY days"
+            fi
+          fi
+        done
+
+  # Security Headers Check
+  security-headers:
+    name: 🛡️ Security Headers Check
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 🛡️ Check security headers
+      run: |
+        echo "🔍 Checking security headers..."
+        
+        for url in "${{ env.PRODUCTION_API_URL }}" "${{ env.STAGING_API_URL }}"; do
+          echo "📋 Checking headers for: $url"
+          
+          HEADERS=$(curl -I -s "$url" || echo "Failed to fetch headers")
+          
+          echo "Response headers:"
+          echo "$HEADERS"
+          echo ""
+          
+          # Check for important security headers
+          if echo "$HEADERS" | grep -qi "x-frame-options"; then
+            echo "✅ X-Frame-Options header present"
+          else
+            echo "⚠️ X-Frame-Options header missing"
+            echo "SECURITY_HEADER_ALERT=true" >> $GITHUB_ENV
+          fi
+          
+          if echo "$HEADERS" | grep -qi "x-content-type-options"; then
+            echo "✅ X-Content-Type-Options header present"
+          else
+            echo "⚠️ X-Content-Type-Options header missing"
+            echo "SECURITY_HEADER_ALERT=true" >> $GITHUB_ENV
+          fi
+          
+          if echo "$HEADERS" | grep -qi "strict-transport-security"; then
+            echo "✅ Strict-Transport-Security header present"
+          else
+            echo "⚠️ HSTS header missing"
+            echo "SECURITY_HEADER_ALERT=true" >> $GITHUB_ENV
+          fi
+          
+          if echo "$HEADERS" | grep -qi "content-security-policy"; then
+            echo "✅ Content-Security-Policy header present"
+          else
+            echo "⚠️ CSP header missing"
+            echo "SECURITY_HEADER_ALERT=true" >> $GITHUB_ENV
+          fi
+          
+          echo "---"
+        done
+
+  # Alerting & Notifications
+  alerting:
+    name: 🔔 Alerting
+    runs-on: ubuntu-latest
+    needs: [health-check, ssl-check, security-headers]
+    if: always() && (failure() || contains(needs.*.result, 'failure'))
+
+    steps:
+    - name: 🔔 Send Slack Alert
+      if: env.SLACK_WEBHOOK_URL
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      run: |
+        ALERT_MESSAGE="🚨 Job Queue System Alert!"
+        ALERT_DETAILS=""
+        
+        # Check which jobs failed
+        if [[ "${{ needs.health-check.result }}" == "failure" ]]; then
+          ALERT_DETAILS="$ALERT_DETAILS\n❌ Health check failed"
+        fi
+        
+        if [[ "${{ env.SSL_CRITICAL_ALERT }}" == "true" ]]; then
+          ALERT_DETAILS="$ALERT_DETAILS\n🚨 SSL certificate expiring soon!"
+        elif [[ "${{ env.SSL_EXPIRY_ALERT }}" == "true" ]]; then
+          ALERT_DETAILS="$ALERT_DETAILS\n⚠️ SSL certificate expires within 30 days"
+        fi
+        
+        if [[ "${{ env.SECURITY_HEADER_ALERT }}" == "true" ]]; then
+          ALERT_DETAILS="$ALERT_DETAILS\n⚠️ Missing security headers detected"
+        fi
+        
+        if [[ "${{ env.QUEUE_ALERT }}" == "true" ]]; then
+          ALERT_DETAILS="$ALERT_DETAILS\n⚠️ High queue size detected"
+        fi
+        
+        if [[ "${{ env.WORKER_ALERT }}" == "true" ]]; then
+          ALERT_DETAILS="$ALERT_DETAILS\n⚠️ No workers connected"
+        fi
+        
+        # Send alert
+        PAYLOAD=$(cat <<EOF
+        {
+          "text": "$ALERT_MESSAGE",
+          "attachments": [
+            {
+              "color": "danger",
+              "fields": [
+                {
+                  "title": "Alert Details",
+                  "value": "$ALERT_DETAILS",
+                  "short": false
+                },
+                {
+                  "title": "Run URL",
+                  "value": "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID",
+                  "short": false
+                }
+              ]
+            }
+          ]
+        }
+        EOF
+        )
+        
+        curl -X POST -H 'Content-type: application/json' \
+          --data "$PAYLOAD" \
+          "$SLACK_WEBHOOK_URL"
+
+    - name: 📧 Send Email Alert
+      if: env.EMAIL_WEBHOOK_URL
+      env:
+        EMAIL_WEBHOOK_URL: ${{ secrets.EMAIL_WEBHOOK_URL }}
+      run: |
+        # Send email via webhook service
+        curl -X POST -H 'Content-type: application/json' \
+          --data "{
+            \"to\": \"${{ secrets.ALERT_EMAIL }}\",
+            \"subject\": \"Job Queue System Alert\",
+            \"body\": \"Alert triggered in monitoring workflow. Check GitHub Actions for details: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\"
+          }" \
+          "$EMAIL_WEBHOOK_URL"
+
+  # Recovery Actions
+  recovery:
+    name: 🔧 Recovery Actions
+    runs-on: ubuntu-latest
+    needs: [health-check, alerting]
+    if: failure() && github.event_name == 'schedule'
+
+    steps:
+    - name: 🔧 Attempt automatic recovery
+      run: |
+        echo "🔧 Attempting automatic recovery actions..."
+        
+        # Restart services via API (if endpoint exists)
+        if [[ "${{ env.RECOVERY_API_ENDPOINT }}" ]]; then
+          echo "🔄 Triggering service restart..."
+          curl -X POST -H "Authorization: Bearer ${{ secrets.RECOVERY_API_TOKEN }}" \
+            "${{ env.RECOVERY_API_ENDPOINT }}/restart"
+        fi
+        
+        # Scale up workers (AWS Lambda or ECS)
+        if [[ "${{ env.AWS_REGION }}" ]]; then
+          echo "📈 Attempting to scale up workers..."
+          # This would use AWS CLI to scale up Lambda concurrency or ECS tasks
+          echo "Scale up command would run here"
+        fi
+
+    - name: 📝 Log recovery attempt
+      run: |
+        echo "Recovery attempt completed at $(date)"
+        echo "Next monitoring cycle will verify if issues are resolved"

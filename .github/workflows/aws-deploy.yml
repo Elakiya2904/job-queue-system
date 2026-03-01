@@ -1,0 +1,467 @@
+name: ☁️ AWS Deployment
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - 'aws/**'
+      - '.github/workflows/aws-deploy.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+      deploy_backend:
+        description: 'Deploy backend services'
+        required: false
+        default: true
+        type: boolean
+      deploy_frontend:
+        description: 'Deploy frontend'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: job-queue-system
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '18'
+
+jobs:
+  # Environment Setup
+  setup:
+    name: 🔧 Setup Deployment
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.env.outputs.environment }}
+      backend_changed: ${{ steps.changes.outputs.backend }}
+      frontend_changed: ${{ steps.changes.outputs.frontend }}
+      
+    steps:
+    - name: 📁 Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 2
+
+    - name: 🎯 Determine environment
+      id: env
+      run: |
+        if [ "${{ github.event.inputs.environment }}" != "" ]; then
+          echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+        else
+          echo "environment=staging" >> $GITHUB_OUTPUT
+        fi
+
+    - name: 🔍 Check for changes
+      uses: dorny/paths-filter@v2
+      id: changes
+      with:
+        filters: |
+          backend:
+            - 'backend/**'
+            - 'aws/lambda/**'
+          frontend:
+            - 'frontend/**'
+            - 'aws/s3/**'
+
+  # Infrastructure as Code Deployment
+  deploy-infrastructure:
+    name: 🏗️ Deploy AWS Infrastructure
+    runs-on: ubuntu-latest
+    needs: setup
+    environment: ${{ needs.setup.outputs.environment }}
+    
+    steps:
+    - name: 📁 Checkout code
+      uses: actions/checkout@v4
+
+    - name: ⚙️ Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: 📦 Setup Node.js for CDK
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+
+    - name: 🚀 Install AWS CDK
+      run: |
+        npm install -g aws-cdk
+        cdk --version
+
+    - name: 🏗️ Deploy CDK infrastructure
+      working-directory: ./aws/infrastructure
+      run: |
+        export ENVIRONMENT="${{ needs.setup.outputs.environment }}"
+        npm install
+        cdk bootstrap
+        cdk deploy --all --require-approval never
+      env:
+        CDK_DEFAULT_REGION: ${{ env.AWS_REGION }}
+        CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
+
+    - name: 📤 Save stack outputs
+      working-directory: ./aws/infrastructure
+      run: |
+        cdk list --long > stack-info.txt
+        mkdir -p ../../deployment-outputs
+        cp stack-info.txt ../../deployment-outputs/
+
+    - name: 📦 Upload deployment artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: deployment-outputs
+        path: deployment-outputs/
+
+  # Backend Lambda Deployment
+  deploy-backend:
+    name: ⚡ Deploy Backend Lambda
+    runs-on: ubuntu-latest
+    needs: [setup, deploy-infrastructure]
+    if: needs.setup.outputs.backend_changed == 'true' || github.event.inputs.deploy_backend == 'true'
+    environment: ${{ needs.setup.outputs.environment }}
+
+    steps:
+    - name: 📁 Checkout code
+      uses: actions/checkout@v4
+
+    - name: ⚙️ Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: 📦 Install dependencies
+      working-directory: ./backend
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: 📥 Download deployment outputs
+      uses: actions/download-artifact@v3
+      with:
+        name: deployment-outputs
+        path: deployment-outputs/
+
+    - name: 🏗️ Build Lambda package
+      working-directory: ./backend
+      run: |
+        # Create deployment package
+        mkdir -p ../lambda-package
+        cp -r app/ ../lambda-package/
+        cp -r alembic/ ../lambda-package/
+        cp alembic.ini ../lambda-package/
+        cp requirements.txt ../lambda-package/
+        
+        # Create Lambda handler
+        cat > ../lambda-package/lambda_handler.py << 'EOF'
+        import json
+        import os
+        from mangum import Mangum
+        from app.main import app
+        
+        # Set environment for Lambda
+        os.environ.setdefault("DATABASE_URL", os.environ.get("RDS_DATABASE_URL"))
+        
+        handler = Mangum(app, lifespan="off")
+        
+        def lambda_handler(event, context):
+            return handler(event, context)
+        EOF
+        
+        # Install dependencies in package
+        cd ../lambda-package
+        pip install -r requirements.txt -t .
+        pip install mangum -t .
+
+    - name: 🗜️ Create deployment zip
+      working-directory: ./lambda-package
+      run: |
+        zip -r ../backend-lambda.zip . -x "*.pyc" "*__pycache__*"
+
+    - name: ⚡ Deploy to Lambda
+      run: |
+        # Get function name from stack outputs
+        FUNCTION_NAME=$(aws lambda list-functions --query 'Functions[?contains(FunctionName, `job-queue-api`)].FunctionName' --output text)
+        
+        if [ ! -z "$FUNCTION_NAME" ]; then
+          echo "📤 Updating Lambda function: $FUNCTION_NAME"
+          aws lambda update-function-code \
+            --function-name $FUNCTION_NAME \
+            --zip-file fileb://backend-lambda.zip
+            
+          echo "⚙️ Updating environment variables"
+          aws lambda update-function-configuration \
+            --function-name $FUNCTION_NAME \
+            --environment Variables="{
+              SECRET_KEY=${{ secrets.SECRET_KEY }},
+              DATABASE_URL=${{ secrets.RDS_DATABASE_URL }},
+              ENVIRONMENT=${{ needs.setup.outputs.environment }}
+            }"
+        else
+          echo "❌ Lambda function not found"
+          exit 1
+        fi
+
+    - name: 🗄️ Run database migrations
+      run: |
+        # Run migrations on RDS
+        export DATABASE_URL="${{ secrets.RDS_DATABASE_URL }}"
+        cd backend
+        alembic upgrade head
+
+  # Worker Lambda Deployment
+  deploy-workers:
+    name: 👷 Deploy Worker Lambda
+    runs-on: ubuntu-latest
+    needs: [setup, deploy-infrastructure, deploy-backend]
+    if: needs.setup.outputs.backend_changed == 'true' || github.event.inputs.deploy_backend == 'true'
+    environment: ${{ needs.setup.outputs.environment }}
+
+    steps:
+    - name: 📁 Checkout code
+      uses: actions/checkout@v4
+
+    - name: ⚙️ Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: 🏗️ Build Worker Lambda package
+      working-directory: ./worker
+      run: |
+        # Create worker deployment package
+        mkdir -p ../worker-lambda-package
+        cp -r app/ ../worker-lambda-package/
+        
+        # Create worker Lambda handler
+        cat > ../worker-lambda-package/lambda_handler.py << 'EOF'
+        import json
+        import os
+        import asyncio
+        from app.worker import process_task
+        
+        def lambda_handler(event, context):
+            """Lambda handler for SQS-triggered task processing"""
+            try:
+                # Process SQS records
+                for record in event['Records']:
+                    message_body = json.loads(record['body'])
+                    task_id = message_body.get('task_id')
+                    
+                    if task_id:
+                        # Process task asynchronously
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        try:
+                            result = loop.run_until_complete(process_task(task_id))
+                            print(f"✅ Task {task_id} completed: {result}")
+                        finally:
+                            loop.close()
+                
+                return {
+                    'statusCode': 200,
+                    'body': json.dumps({
+                        'message': f'Processed {len(event["Records"])} messages'
+                    })
+                }
+            except Exception as e:
+                print(f"❌ Worker error: {str(e)}")
+                raise
+        EOF
+        
+        # Install dependencies
+        cd ../worker-lambda-package
+        pip install -r ../worker/requirements.txt -t . 2>/dev/null || echo "No worker requirements.txt found"
+
+    - name: 🗜️ Create worker zip
+      working-directory: ./worker-lambda-package
+      run: |
+        zip -r ../worker-lambda.zip . -x "*.pyc" "*__pycache__*"
+
+    - name: 👷 Deploy Worker Lambda
+      run: |
+        # Get worker function name
+        WORKER_FUNCTION=$(aws lambda list-functions --query 'Functions[?contains(FunctionName, `job-queue-worker`)].FunctionName' --output text)
+        
+        if [ ! -z "$WORKER_FUNCTION" ]; then
+          echo "📤 Updating Worker Lambda: $WORKER_FUNCTION"
+          aws lambda update-function-code \
+            --function-name $WORKER_FUNCTION \
+            --zip-file fileb://worker-lambda.zip
+        else
+          echo "❌ Worker Lambda function not found"
+          exit 1
+        fi
+
+  # Frontend S3/CloudFront Deployment
+  deploy-frontend:
+    name: 🎨 Deploy Frontend
+    runs-on: ubuntu-latest
+    needs: [setup, deploy-infrastructure]
+    if: needs.setup.outputs.frontend_changed == 'true' || github.event.inputs.deploy_frontend == 'true'
+    environment: ${{ needs.setup.outputs.environment }}
+
+    steps:
+    - name: 📁 Checkout code
+      uses: actions/checkout@v4
+
+    - name: ⚙️ Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: 📦 Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: ./frontend/package-lock.json
+
+    - name: 📥 Install dependencies
+      working-directory: ./frontend
+      run: npm ci
+
+    - name: 🏗️ Build Next.js application
+      working-directory: ./frontend
+      run: |
+        # Get API Gateway URL from AWS
+        API_URL=$(aws apigateway get-rest-apis --query 'items[?name==`job-queue-api-${{ needs.setup.outputs.environment }}`].id' --output text)
+        if [ ! -z "$API_URL" ]; then
+          export NEXT_PUBLIC_API_URL="https://${API_URL}.execute-api.${{ env.AWS_REGION }}.amazonaws.com/prod"
+        else
+          export NEXT_PUBLIC_API_URL="${{ secrets.API_URL }}"
+        fi
+        
+        npm run build
+
+    - name: 🗜️ Export static files
+      working-directory: ./frontend
+      run: npm run export
+
+    - name: 📤 Deploy to S3
+      working-directory: ./frontend
+      run: |
+        # Get S3 bucket name
+        BUCKET_NAME=$(aws s3api list-buckets --query 'Buckets[?contains(Name, `job-queue-frontend`)].Name' --output text)
+        
+        if [ ! -z "$BUCKET_NAME" ]; then
+          echo "📤 Deploying to S3 bucket: $BUCKET_NAME"
+          aws s3 sync out/ s3://$BUCKET_NAME --delete --cache-control max-age=31536000
+          
+          # Update index.html with no-cache
+          aws s3 cp out/index.html s3://$BUCKET_NAME/index.html --cache-control no-cache
+        else
+          echo "❌ S3 bucket not found"
+          exit 1
+        fi
+
+    - name: 🔄 Invalidate CloudFront
+      run: |
+        # Get CloudFront distribution ID
+        DISTRIBUTION_ID=$(aws cloudfront list-distributions --query 'DistributionList.Items[?Comment==`job-queue-frontend-${{ needs.setup.outputs.environment }}`].Id' --output text)
+        
+        if [ ! -z "$DISTRIBUTION_ID" ]; then
+          echo "🔄 Invalidating CloudFront distribution: $DISTRIBUTION_ID"
+          aws cloudfront create-invalidation \
+            --distribution-id $DISTRIBUTION_ID \
+            --paths "/*"
+        fi
+
+  # Post-Deployment Tests
+  smoke-tests:
+    name: 🧪 Smoke Tests
+    runs-on: ubuntu-latest
+    needs: [deploy-backend, deploy-frontend]
+    if: always() && (needs.deploy-backend.result == 'success' || needs.deploy-frontend.result == 'success')
+    environment: ${{ needs.setup.outputs.environment }}
+
+    steps:
+    - name: 📁 Checkout code
+      uses: actions/checkout@v4
+
+    - name: ⚙️ Configure AWS credentials
+      uses: actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: 🏥 Health check API
+      run: |
+        # Get API Gateway URL
+        API_ID=$(aws apigateway get-rest-apis --query 'items[?name==`job-queue-api-${{ needs.setup.outputs.environment }}`].id' --output text)
+        API_URL="https://${API_ID}.execute-api.${{ env.AWS_REGION }}.amazonaws.com/prod"
+        
+        echo "🏥 Testing API health: $API_URL/health"
+        response=$(curl -s -o /dev/null -w "%{http_code}" "$API_URL/health")
+        
+        if [ "$response" = "200" ]; then
+          echo "✅ API health check passed"
+        else
+          echo "❌ API health check failed: HTTP $response"
+          exit 1
+        fi
+
+    - name: 🎨 Test frontend availability
+      run: |
+        # Get CloudFront URL
+        DISTRIBUTION_ID=$(aws cloudfront list-distributions --query 'DistributionList.Items[?Comment==`job-queue-frontend-${{ needs.setup.outputs.environment }}`].Id' --output text)
+        
+        if [ ! -z "$DISTRIBUTION_ID" ]; then
+          DOMAIN_NAME=$(aws cloudfront get-distribution --id $DISTRIBUTION_ID --query 'Distribution.DomainName' --output text)
+          FRONTEND_URL="https://$DOMAIN_NAME"
+          
+          echo "🎨 Testing frontend: $FRONTEND_URL"
+          response=$(curl -s -o /dev/null -w "%{http_code}" "$FRONTEND_URL")
+          
+          if [ "$response" = "200" ]; then
+            echo "✅ Frontend health check passed"
+          else
+            echo "❌ Frontend health check failed: HTTP $response"
+            exit 1
+          fi
+        fi
+
+    - name: 📊 Send deployment notification
+      if: always()
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      run: |
+        if [ ! -z "$SLACK_WEBHOOK_URL" ]; then
+          if [ "${{ job.status }}" = "success" ]; then
+            curl -X POST -H 'Content-type: application/json' \
+              --data '{"text":"🎉 Job Queue System successfully deployed to ${{ needs.setup.outputs.environment }}! ✅"}' \
+              $SLACK_WEBHOOK_URL
+          else
+            curl -X POST -H 'Content-type: application/json' \
+              --data '{"text":"❌ Job Queue System deployment to ${{ needs.setup.outputs.environment }} failed!"}' \
+              $SLACK_WEBHOOK_URL
+          fi
+        fi

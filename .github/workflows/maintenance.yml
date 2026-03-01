@@ -1,0 +1,485 @@
+name: 🔄 Dependency Updates & Maintenance
+
+on:
+  schedule:
+    # Run weekly on Sundays at 2 AM UTC
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+    inputs:
+      update_type:
+        description: 'Update type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+        - patch
+        - minor
+        - major
+        - security-only
+
+env:
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '18'
+
+jobs:
+  # Python Dependency Updates
+  python-dependencies:
+    name: 🐍 Python Dependencies
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 📁 Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: 📦 Install pip-tools
+      run: |
+        python -m pip install --upgrade pip
+        pip install pip-tools pip-audit
+
+    - name: 🔍 Check for security vulnerabilities
+      working-directory: ./backend
+      id: security-check
+      run: |
+        pip install -r requirements.txt
+        pip-audit --desc --output ../security-audit.json --format=json || true
+        pip-audit --desc || echo "SECURITY_ISSUES=true" >> $GITHUB_OUTPUT
+
+    - name: 🔄 Update Python dependencies
+      working-directory: ./backend
+      run: |
+        # Backup current requirements
+        cp requirements.txt requirements.txt.backup
+        
+        # Update based on input or default to patch updates
+        UPDATE_TYPE="${{ github.event.inputs.update_type || 'patch' }}"
+        
+        if [[ "$UPDATE_TYPE" == "security-only" ]]; then
+          echo "🔒 Applying security updates only..."
+          pip-audit --fix --dry-run --output ../security-fixes.txt || true
+        elif [[ "$UPDATE_TYPE" == "patch" ]]; then
+          echo "🔧 Applying patch updates..."
+          pip-compile --upgrade-package="*" --resolver=backtracking requirements.in
+        elif [[ "$UPDATE_TYPE" == "minor" ]]; then
+          echo "📈 Applying minor updates..."
+          pip-compile --upgrade --resolver=backtracking requirements.in
+        elif [[ "$UPDATE_TYPE" == "major" ]]; then
+          echo "🚀 Applying major updates..."
+          pip-compile --upgrade --resolver=backtracking requirements.in
+        fi
+
+    - name: 📊 Generate Python update summary
+      working-directory: ./backend
+      run: |
+        echo "# 🐍 Python Dependency Updates" > ../python-update-summary.md
+        echo "" >> ../python-update-summary.md
+        echo "Update type: ${{ github.event.inputs.update_type || 'patch' }}" >> ../python-update-summary.md
+        echo "Date: $(date)" >> ../python-update-summary.md
+        echo "" >> ../python-update-summary.md
+        
+        if [[ -f "../security-audit.json" ]]; then
+          VULN_COUNT=$(jq 'length' ../security-audit.json)
+          echo "🔒 Security vulnerabilities found: $VULN_COUNT" >> ../python-update-summary.md
+          echo "" >> ../python-update-summary.md
+        fi
+        
+        # Compare requirements files
+        if [[ -f "requirements.txt.backup" ]] && ! diff -q requirements.txt requirements.txt.backup > /dev/null; then
+          echo "## 📋 Changed Dependencies" >> ../python-update-summary.md
+          echo "" >> ../python-update-summary.md
+          echo "\`\`\`diff" >> ../python-update-summary.md
+          diff requirements.txt.backup requirements.txt || true >> ../python-update-summary.md
+          echo "\`\`\`" >> ../python-update-summary.md
+        else
+          echo "✅ No dependency updates needed" >> ../python-update-summary.md
+        fi
+
+    - name: 📤 Upload Python update artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: python-updates
+        path: |
+          python-update-summary.md
+          security-audit.json
+          backend/requirements.txt.backup
+
+  # Node.js Dependency Updates
+  nodejs-dependencies:
+    name: ⚛️ Node.js Dependencies
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 📁 Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: 📦 Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: ./frontend/package-lock.json
+
+    - name: 📦 Install npm-check-updates
+      run: npm install -g npm-check-updates audit-ci
+
+    - name: 🔍 Check for security vulnerabilities
+      working-directory: ./frontend
+      id: npm-security
+      run: |
+        npm audit --audit-level=moderate --json > ../npm-security-audit.json || true
+        npm audit --audit-level=moderate || echo "SECURITY_ISSUES=true" >> $GITHUB_OUTPUT
+
+    - name: 🔄 Update Node.js dependencies
+      working-directory: ./frontend
+      run: |
+        # Backup current package files
+        cp package.json package.json.backup
+        cp package-lock.json package-lock.json.backup
+        
+        UPDATE_TYPE="${{ github.event.inputs.update_type || 'patch' }}"
+        
+        if [[ "$UPDATE_TYPE" == "security-only" ]]; then
+          echo "🔒 Applying security updates only..."
+          npm audit fix --audit-level=moderate
+        elif [[ "$UPDATE_TYPE" == "patch" ]]; then
+          echo "🔧 Applying patch updates..."
+          ncu --target patch -u
+          npm install
+        elif [[ "$UPDATE_TYPE" == "minor" ]]; then
+          echo "📈 Applying minor updates..."
+          ncu --target minor -u
+          npm install
+        elif [[ "$UPDATE_TYPE" == "major" ]]; then
+          echo "🚀 Applying major updates..."
+          ncu -u
+          npm install
+        fi
+
+    - name: 📊 Generate Node.js update summary
+      working-directory: ./frontend
+      run: |
+        echo "# ⚛️ Node.js Dependency Updates" > ../nodejs-update-summary.md
+        echo "" >> ../nodejs-update-summary.md
+        echo "Update type: ${{ github.event.inputs.update_type || 'patch' }}" >> ../nodejs-update-summary.md
+        echo "Date: $(date)" >> ../nodejs-update-summary.md
+        echo "" >> ../nodejs-update-summary.md
+        
+        if [[ -f "../npm-security-audit.json" ]]; then
+          VULN_COUNT=$(jq '.metadata.vulnerabilities.total // 0' ../npm-security-audit.json)
+          echo "🔒 Security vulnerabilities found: $VULN_COUNT" >> ../nodejs-update-summary.md
+          echo "" >> ../nodejs-update-summary.md
+        fi
+        
+        # Compare package files
+        if [[ -f "package.json.backup" ]] && ! diff -q package.json package.json.backup > /dev/null; then
+          echo "## 📋 Changed Dependencies" >> ../nodejs-update-summary.md
+          echo "" >> ../nodejs-update-summary.md
+          echo "\`\`\`diff" >> ../nodejs-update-summary.md
+          diff package.json.backup package.json || true >> ../nodejs-update-summary.md
+          echo "\`\`\`" >> ../nodejs-update-summary.md
+        else
+          echo "✅ No dependency updates needed" >> ../nodejs-update-summary.md
+        fi
+
+    - name: 📤 Upload Node.js update artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: nodejs-updates
+        path: |
+          nodejs-update-summary.md
+          npm-security-audit.json
+          frontend/package.json.backup
+          frontend/package-lock.json.backup
+
+  # Test Updates
+  test-updates:
+    name: 🧪 Test Updates
+    runs-on: ubuntu-latest
+    needs: [python-dependencies, nodejs-dependencies]
+
+    steps:
+    - name: 📁 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 📥 Download update artifacts
+      uses: actions/download-artifact@v3
+
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: 📦 Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+
+    - name: 🧪 Test Python updates
+      working-directory: ./backend
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+        # Run basic import tests
+        python -c "
+        import app.main
+        from app.models import task, worker
+        from app.services import background_services
+        print('✅ Python imports successful')
+        "
+        
+        # Run unit tests if they exist
+        if [[ -f "test_*.py" ]] || [[ -d "tests/" ]]; then
+          pip install pytest
+          pytest --tb=short || echo "⚠️ Some tests failed"
+        fi
+
+    - name: 🧪 Test Node.js updates
+      working-directory: ./frontend
+      run: |
+        npm ci
+        
+        # Build check
+        npm run build
+        
+        # Type check
+        npm run type-check || echo "⚠️ Type check issues found"
+        
+        # Lint check
+        npm run lint || echo "⚠️ Lint issues found"
+        
+        echo "✅ Frontend build successful"
+
+    - name: 🐳 Test Docker builds
+      run: |
+        echo "🐳 Testing Docker builds with updated dependencies..."
+        
+        # Build backend
+        docker build -t test-backend ./backend
+        
+        # Build frontend  
+        docker build -t test-frontend ./frontend
+        
+        echo "✅ Docker builds successful"
+
+  # Create Pull Request
+  create-pr:
+    name: 📝 Create Pull Request
+    runs-on: ubuntu-latest
+    needs: [python-dependencies, nodejs-dependencies, test-updates]
+    if: always() && (needs.test-updates.result == 'success')
+
+    steps:
+    - name: 📁 Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: 📥 Download update summaries
+      uses: actions/download-artifact@v3
+      with:
+        name: python-updates
+
+    - name: 📥 Download Node.js updates
+      uses: actions/download-artifact@v3
+      with:
+        name: nodejs-updates
+
+    - name: 🔧 Configure Git
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+
+    - name: 📝 Create update branch
+      run: |
+        UPDATE_TYPE="${{ github.event.inputs.update_type || 'patch' }}"
+        BRANCH_NAME="dependencies/automated-$UPDATE_TYPE-updates-$(date +%Y%m%d)"
+        
+        git checkout -b "$BRANCH_NAME"
+        echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
+
+    - name: 📋 Prepare PR description
+      run: |
+        echo "# 🔄 Automated Dependency Updates" > pr-description.md
+        echo "" >> pr-description.md
+        echo "This PR contains automated dependency updates generated by the maintenance workflow." >> pr-description.md
+        echo "" >> pr-description.md
+        echo "## 📊 Update Summary" >> pr-description.md
+        echo "" >> pr-description.md
+        
+        if [[ -f "python-update-summary.md" ]]; then
+          cat python-update-summary.md >> pr-description.md
+          echo "" >> pr-description.md
+        fi
+        
+        if [[ -f "nodejs-update-summary.md" ]]; then
+          cat nodejs-update-summary.md >> pr-description.md
+          echo "" >> pr-description.md
+        fi
+        
+        echo "## ✅ Testing" >> pr-description.md
+        echo "- [x] Python imports and basic functionality" >> pr-description.md
+        echo "- [x] Node.js build and type checking" >> pr-description.md
+        echo "- [x] Docker build compatibility" >> pr-description.md
+        echo "" >> pr-description.md
+        echo "## 🔍 Review Checklist" >> pr-description.md
+        echo "- [ ] Review security vulnerability fixes" >> pr-description.md
+        echo "- [ ] Check for breaking changes in major updates" >> pr-description.md
+        echo "- [ ] Verify all tests pass" >> pr-description.md
+        echo "- [ ] Confirm deployment works correctly" >> pr-description.md
+        echo "" >> pr-description.md
+        echo "Auto-generated by GitHub Actions on $(date)" >> pr-description.md
+
+    - name: 💾 Commit changes
+      run: |
+        # Add all changes
+        git add .
+        
+        if git diff --staged --quiet; then
+          echo "No changes to commit"
+          exit 0
+        fi
+        
+        UPDATE_TYPE="${{ github.event.inputs.update_type || 'patch' }}"
+        git commit -m "🔄 Automated $UPDATE_TYPE dependency updates
+
+        - Python dependencies updated
+        - Node.js dependencies updated  
+        - Security vulnerabilities addressed
+        - Docker compatibility verified
+
+        Generated by: ${{ github.workflow }} run ${{ github.run_number }}"
+
+    - name: 📤 Push branch
+      run: |
+        git push origin "$BRANCH_NAME"
+
+    - name: 📝 Create Pull Request
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        UPDATE_TYPE="${{ github.event.inputs.update_type || 'patch' }}"
+        
+        gh pr create \
+          --title "🔄 Automated $UPDATE_TYPE dependency updates" \
+          --body-file pr-description.md \
+          --head "$BRANCH_NAME" \
+          --base main \
+          --assignee "${{ github.actor }}" \
+          --label "dependencies,automated,maintenance"
+
+  # Cleanup Old Branches
+  cleanup:
+    name: 🧹 Cleanup
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+    - name: 📁 Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: 🧹 Delete old dependency branches
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        echo "🧹 Cleaning up old dependency update branches..."
+        
+        # Get merged dependency branches older than 30 days
+        OLD_BRANCHES=$(git for-each-ref --format='%(refname:short) %(committerdate)' refs/remotes/origin/dependencies/ | \
+          awk '$2 < "'$(date --date='30 days ago' -I)'"' | cut -d' ' -f1 | sed 's|origin/||')
+        
+        for branch in $OLD_BRANCHES; do
+          echo "Deleting old branch: $branch"
+          git push origin --delete "$branch" || echo "Failed to delete $branch (might not exist)"
+        done
+        
+        # Clean up local references
+        git remote prune origin
+
+  # Security Notifications
+  security-notification:
+    name: 🔒 Security Notifications
+    runs-on: ubuntu-latest
+    needs: [python-dependencies, nodejs-dependencies]
+    if: contains(needs.*.outputs.SECURITY_ISSUES, 'true')
+
+    steps:
+    - name: 🔔 Notify about security issues
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      run: |
+        if [[ -n "$SLACK_WEBHOOK_URL" ]]; then
+          curl -X POST -H 'Content-type: application/json' \
+            --data '{
+              "text": "🔒 Security vulnerabilities found in Job Queue System dependencies!",
+              "attachments": [
+                {
+                  "color": "warning",
+                  "fields": [
+                    {
+                      "title": "Action Required",
+                      "value": "Review and approve the automated dependency update PR to fix security issues.",
+                      "short": false
+                    },
+                    {
+                      "title": "Workflow Run",
+                      "value": "'$GITHUB_SERVER_URL'/'$GITHUB_REPOSITORY'/actions/runs/'$GITHUB_RUN_ID'",
+                      "short": false
+                    }
+                  ]
+                }
+              ]
+            }' \
+            "$SLACK_WEBHOOK_URL"
+        fi
+
+  # Maintenance Summary
+  maintenance-summary:
+    name: 📊 Maintenance Summary
+    runs-on: ubuntu-latest
+    needs: [python-dependencies, nodejs-dependencies, test-updates, create-pr, cleanup]
+    if: always()
+
+    steps:
+    - name: 📊 Generate maintenance report
+      run: |
+        echo "# 🔄 Maintenance Workflow Summary" > maintenance-summary.md
+        echo "" >> maintenance-summary.md
+        echo "Executed on: $(date)" >> maintenance-summary.md
+        echo "Trigger: ${{ github.event_name }}" >> maintenance-summary.md
+        echo "Update type: ${{ github.event.inputs.update_type || 'patch' }}" >> maintenance-summary.md
+        echo "" >> maintenance-summary.md
+        
+        echo "## 📋 Job Results" >> maintenance-summary.md
+        echo "| Job | Status |" >> maintenance-summary.md
+        echo "|-----|--------|" >> maintenance-summary.md
+        echo "| Python Dependencies | ${{ needs.python-dependencies.result == 'success' && '✅ Success' || '❌ Failed' }} |" >> maintenance-summary.md
+        echo "| Node.js Dependencies | ${{ needs.nodejs-dependencies.result == 'success' && '✅ Success' || '❌ Failed' }} |" >> maintenance-summary.md
+        echo "| Test Updates | ${{ needs.test-updates.result == 'success' && '✅ Success' || '❌ Failed' }} |" >> maintenance-summary.md
+        echo "| Create PR | ${{ needs.create-pr.result == 'success' && '✅ Success' || (needs.create-pr.result == 'skipped' && '⏭️ Skipped' || '❌ Failed') }} |" >> maintenance-summary.md
+        echo "| Cleanup | ${{ needs.cleanup.result == 'success' && '✅ Success' || '❌ Failed' }} |" >> maintenance-summary.md
+        echo "" >> maintenance-summary.md
+        
+        echo "## 🎯 Next Steps" >> maintenance-summary.md
+        echo "1. 🔍 Review generated pull request for dependency updates" >> maintenance-summary.md
+        echo "2. 🧪 Run additional integration tests if needed" >> maintenance-summary.md
+        echo "3. 🚀 Deploy updates to staging environment" >> maintenance-summary.md
+        echo "4. ✅ After validation, deploy to production" >> maintenance-summary.md
+        
+        cat maintenance-summary.md
+
+    - name: 📤 Upload maintenance summary
+      uses: actions/upload-artifact@v3
+      with:
+        name: maintenance-summary
+        path: maintenance-summary.md

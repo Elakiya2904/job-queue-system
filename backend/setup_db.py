@@ -15,6 +15,7 @@ from pathlib import Path
 backend_dir = Path(__file__).parent
 sys.path.insert(0, str(backend_dir))
 
+from sqlalchemy import text
 from app.db.base import engine, Base
 from app.models import Task, TaskAttempt, Worker, DeadLetterEntry
 
@@ -23,7 +24,7 @@ def test_connection():
     """Test database connection."""
     try:
         with engine.connect() as conn:
-            result = conn.execute("SELECT 1")
+            result = conn.execute(text("SELECT 1"))
             print("✅ Database connection successful")
             return True
     except Exception as e:
@@ -46,13 +47,13 @@ def list_tables():
     """List all tables in the database."""
     try:
         with engine.connect() as conn:
-            # Get table names for PostgreSQL
-            result = conn.execute("""
-                SELECT table_name 
-                FROM information_schema.tables 
-                WHERE table_schema = 'public'
-                ORDER BY table_name
-            """)
+            # Get table names for SQLite
+            result = conn.execute(text("""
+                SELECT name as table_name 
+                FROM sqlite_master 
+                WHERE type='table' AND name NOT LIKE 'sqlite_%'
+                ORDER BY name
+            """))
             tables = [row[0] for row in result]
             
             if tables:
