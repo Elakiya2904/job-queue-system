@@ -1,4 +1,4 @@
-# 🚀 Production-Ready Job Queue System
+# 🚀Job Queue System
 
 A scalable, production-ready distributed job queue system with comprehensive concurrency protection, authentication, and monitoring capabilities.
 
