@@ -1,0 +1,16 @@
+# Optional Dependencies for Enhanced Features
+# Install these packages for additional functionality
+
+# Resource Monitoring (CPU, Memory usage in WorkerRunner)
+# Enables detailed worker health metrics and performance monitoring
+psutil>=5.8.0
+
+# Development and Testing
+# pytest>=7.0.0
+# pytest-asyncio>=0.21.0
+# black>=22.0.0
+# flake8>=5.0.0
+
+# Production Monitoring (Future)
+# prometheus-client>=0.15.0
+# py-spy>=0.3.0
