@@ -13,33 +13,55 @@ A scalable, production-ready distributed job queue system with comprehensive con
 
 ## 🏗️ Architecture
 
-### Core Components
+### Current Production Stack
+- **FastAPI Backend** - Production-ready API with JWT auth and atomic operations
+- **Next.js Frontend** - Modern React dashboard with real-time monitoring
+- **SQLite Database** - Local development with Alembic migrations
+- **Python Workers** - Distributed task processing with race condition protection
 
-1. **FastAPI Backend** (`/backend/`) - Production-ready API service
-   - JWT Authentication with role-based access
-   - Task lifecycle management with atomic operations
-   - Worker registration and heartbeat monitoring
-   - Dead letter queue for failed tasks
-   - Comprehensive error handling and validation
+### 🚀 AWS Cloud Architecture (In Development)
 
-2. **Next.js Frontend** (`/frontend/`) - Modern React dashboard
-   - Real-time task monitoring
-   - Worker management interface
-   - Authentication with protected routes
-   - Responsive design with Tailwind CSS
+This system is designed for seamless migration to AWS cloud infrastructure:
 
-3. **Worker System** (`/worker/`) - Distributed task processing
-   - Multi-capability worker support
-   - Automatic task claiming with race condition protection
-   - Health monitoring and statistics
-   - Graceful error handling and retries
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        AWS CLOUD ARCHITECTURE                  │
+├─────────────────────────────────────────────────────────────────┤
+│  Frontend (Vercel/S3)     │  API Gateway + Lambda Functions    │
+│  ┌─────────────────┐      │  ┌──────────┐ ┌──────────────┐     │
+│  │   Next.js App   │────────▶│   API GW    │ │    FastAPI     │     │
+│  │   (Dashboard)   │      │  │   Routes    │ │    Lambda      │     │
+│  └─────────────────┘      │  └──────────┘ └──────────────┘     │
+└─────────────────────────────────────────────────────────────────┤
+│              Message Queue & Task Processing                    │
+│  ┌─────────────────┐      │  ┌──────────────────────────────┐  │
+│  │   Amazon SQS    │      │  │        Lambda Workers        │  │
+│  │  ┌───────────┐  │      │  │  ┌─────────┐ ┌─────────┐    │  │
+│  │  │ Task Queue│  │────────▶│  │Worker-1 │ │Worker-2 │    │  │
+│  │  └───────────┘  │      │  │  └─────────┘ └─────────┘    │  │
+│  │  ┌───────────┐  │      │  │       Auto Scaling          │  │
+│  │  │ DLQ       │  │      │  └──────────────────────────────┘  │
+│  │  └───────────┘  │      │                                  │
+│  └─────────────────┘      │                                  │
+└─────────────────────────────────────────────────────────────────┤
+│                     Data & Monitoring                          │
+│  ┌─────────────────┐      │  ┌──────────────────────────────┐  │
+│  │   RDS/Aurora    │      │  │         CloudWatch           │  │
+│  │   PostgreSQL    │      │  │  ┌─────────┐ ┌─────────┐    │  │
+│  │  ┌───────────┐  │      │  │  │ Metrics │ │  Logs   │    │  │
+│  │  │   Tasks   │  │      │  │  └─────────┘ └─────────┘    │  │
+│  │  │  Workers  │  │      │  │  ┌─────────┐ ┌─────────┐    │  │
+│  │  │   Users   │  │      │  │  │ Alarms  │ │Dashboard│    │  │
+│  │  └───────────┘  │      │  │  └─────────┘ └─────────┘    │  │
+│  └─────────────────┘      │  └──────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
 
-4. **Database Layer** - SQLite with Alembic migrations
-   - Atomic task operations
-   - Worker state management
-   - Task attempt tracking
-   - Dead letter queue storage
-
+#### AWS Services Integration:
+- **🚀 SQS (Simple Queue Service)**: Reliable message queuing with dead letter queues
+- **⚡ Lambda Functions**: Auto-scaling serverless workers with event-driven processing  
+- **🗄️ RDS Aurora**: Serverless PostgreSQL for production-scale data
+- **🔄 GitHub Actions**: Automated CI/CD pipeline for deployment
 ### Project Structure
 ```
 job-queue-system/
@@ -62,6 +84,113 @@ job-queue-system/
 ├── start_system.py         → System startup script
 └── CONCURRENCY_TESTING_RESULTS.md → Test validation results
 ```
+
+## ☁️ AWS Cloud Migration
+
+### 🎯 Migration Roadmap
+
+The system is architected for seamless AWS migration with these phases:
+
+#### Phase 1: SQS Integration 🚀
+- Replace internal task queuing with **Amazon SQS**
+- Implement dead letter queues for failed tasks
+- Add message visibility timeout and retry logic
+- Maintain backward compatibility with local development
+
+#### Phase 2: Lambda Workers ⚡
+- Convert Python workers to **AWS Lambda functions**
+- Implement auto-scaling based on queue depth
+- Add Lambda layers for shared dependencies
+- Configure event-driven processing from SQS
+
+#### Phase 3: Database Migration 🗄️
+- Migrate from SQLite to **RDS Aurora Serverless PostgreSQL**
+- Update connection handling for cloud database
+- Implement connection pooling and failover
+- Data migration scripts and validation
+
+
+#### Phase 4: CI/CD Pipeline 🔄
+- **GitHub Actions** workflows for automated testing
+- Infrastructure as Code with **CloudFormation/CDK**
+- Multi-environment deployments (dev/staging/prod)
+- Automated rollback and health checks
+
+
+### 🛠️ AWS Setup Instructions
+
+#### Prerequisites
+```bash
+# Install AWS CLI
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip awscliv2.zip && sudo ./aws/install
+
+# Configure AWS credentials
+aws configure
+
+# Install Terraform/CDK for Infrastructure as Code
+npm install -g aws-cdk-lib
+```
+
+#### 1. SQS Setup
+```bash
+# Create SQS queues
+aws sqs create-queue --queue-name job-queue-tasks
+aws sqs create-queue --queue-name job-queue-dlq
+```
+
+#### 2. RDS Aurora Setup
+```bash
+# Create Aurora Serverless cluster
+aws rds create-db-cluster \
+  --db-cluster-identifier job-queue-db \
+  --engine aurora-postgresql \
+  --engine-mode serverless \
+  --scaling-configuration MinCapacity=2,MaxCapacity=4,AutoPause=true
+```
+
+#### 3. Lambda Deployment
+```bash
+# Package and deploy Lambda functions
+cd aws-lambda
+zip -r worker-function.zip .
+aws lambda create-function \
+  --function-name job-queue-worker \
+  --runtime python3.9 \
+  --role arn:aws:iam::ACCOUNT:role/lambda-execution-role \
+  --handler lambda_function.lambda_handler \
+  --zip-file fileb://worker-function.zip
+```
+
+
+### 🔄 Environment Configuration
+
+#### Local Development (.env)
+```bash
+# Local SQLite for development
+DATABASE_URL=sqlite:///./data/job_queue.db
+QUEUE_TYPE=internal
+ENVIRONMENT=development
+```
+
+#### AWS Production (.env.production)
+```bash
+# AWS RDS PostgreSQL
+DATABASE_URL=postgresql://user:pass@job-queue-db.cluster-xxx.rds.amazonaws.com/jobqueue
+QUEUE_TYPE=sqs
+SQS_QUEUE_URL=https://sqs.region.amazonaws.com/account/job-queue-tasks
+SQS_DLQ_URL=https://sqs.region.amazonaws.com/account/job-queue-dlq
+AWS_REGION=us-east-1
+ENVIRONMENT=production
+```
+
+### 📈 Migration Benefits
+
+✅ **Scalability**: Auto-scaling workers based on demand  
+✅ **Reliability**: SQS guarantees message delivery with DLQ  
+✅ **Cost-Effective**: Pay only for usage, serverless architecture  
+✅ **Maintenance**: Managed services reduce operational overhead  
+✅ **Security**: AWS IAM roles and VPC integration  
 
 ## 🚀 Quick Start
 
@@ -95,11 +224,6 @@ cd worker
 python simple_worker.py
 ```
 
-### Option 3: Docker
-```bash
-docker-compose up --build
-```
-
 ## 🔐 Authentication
 
 ### Default Admin Account
@@ -117,13 +241,6 @@ curl -X POST http://localhost:8001/api/v1/auth/login \
 curl -H "Authorization: Bearer <token>" \
   http://localhost:8001/api/v1/tasks
 ```
-
-## 📊 API Documentation
-
-### Interactive API Docs
-- **Swagger UI**: [http://localhost:8001/docs](http://localhost:8001/docs)
-- **ReDoc**: [http://localhost:8001/redoc](http://localhost:8001/redoc)
-
 ### Key Endpoints
 ```
 Authentication:
@@ -171,106 +288,3 @@ python test_stress_concurrency.py
 - ✅ **Monitoring**: Health endpoints and metrics
 - ✅ **Scalability**: Multi-worker support with load balancing
 
-## 🔧 Configuration
-
-### Environment Variables
-```bash
-# Backend configuration
-DATABASE_URL=sqlite:///./data/job_queue.db
-SECRET_KEY=your-super-secret-jwt-key
-DEBUG=false
-
-# Frontend configuration  
-NEXT_PUBLIC_API_URL=http://localhost:8001
-
-# Worker configuration
-API_BASE_URL=http://localhost:8001
-WORKER_ID=worker_01
-CAPABILITIES=["default", "email_processing"]
-```
-
-## 🐳 Docker Deployment
-
-```bash
-# Start all services with Docker
-docker-compose up -d
-
-# View logs
-docker-compose logs -f
-
-# Scale workers
-docker-compose up -d --scale worker=3
-
-# Stop services
-docker-compose down
-```
-
-## 🔄 Database Management
-
-### Migrations
-```bash
-# Create migration
-alembic revision --autogenerate -m "Description"
-
-# Apply migrations  
-alembic upgrade head
-
-# Migration history
-alembic history
-```
-
-### Database Reset
-```bash
-# Recreate database (CAUTION: Destroys all data)
-python setup_db.py --reset
-```
-
-## 📈 Monitoring & Metrics
-
-### Health Monitoring
-```bash
-# System health
-curl http://localhost:8001/health
-
-# Detailed metrics (requires admin auth)
-curl -H "Authorization: Bearer <token>" \
-  http://localhost:8001/api/v1/admin/metrics
-```
-
-### Key Metrics
-- Task throughput and completion rates
-- Worker availability and performance  
-- Error rates and failure patterns
-- Queue depth and processing delays
-
-## 🚀 Next Steps: AWS Integration
-
-The system is validated and ready for cloud deployment with:
-
-- **Amazon SQS**: Reliable message queuing
-- **AWS Lambda**: Auto-scaling worker functions
-- **CloudWatch**: Comprehensive monitoring and logging
-- **GitHub Actions**: Automated CI/CD pipeline
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature-name`
-3. Make changes with tests
-4. Commit: `git commit -m 'Add feature'`
-5. Push: `git push origin feature-name`  
-6. Submit a pull request
-
-## 📄 License
-
-This project is licensed under the MIT License.
-
-## 🆘 Support
-
-For issues and questions:
-1. Check the [API Documentation](http://localhost:8001/docs)
-2. Review [CONCURRENCY_TESTING_RESULTS.md](./CONCURRENCY_TESTING_RESULTS.md)
-3. Create an issue on GitHub
-
-## License
-This project is licensed under the MIT License.
