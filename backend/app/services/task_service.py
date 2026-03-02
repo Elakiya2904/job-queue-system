@@ -2,11 +2,13 @@
 Production-grade Task Service Layer
 
 Handles all task lifecycle operations with proper transaction management,
-concurrency control, and PostgreSQL optimizations.
+concurrency control, and PostgreSQL optimizations. Supports both internal
+database queuing and AWS SQS for scalable distributed processing.
 """
 
 import logging
 import uuid
+import asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any, Tuple
 from sqlalchemy.orm import Session, joinedload
@@ -16,6 +18,8 @@ from contextlib import contextmanager
 
 from ..models import Task, TaskAttempt, Worker, DeadLetterEntry
 from ..db.base import SessionLocal, engine
+from ..core.config import settings
+from .sqs_service import sqs_service
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +145,46 @@ class TaskService:
                 session.refresh(task)
                 
                 logger.info(f"Created task {task.id} of type {task_type} with priority {priority}")
+                
+                # Send message to SQS if configured (fire and forget)
+                if settings.use_sqs:
+                    try:
+                        # Calculate delay for scheduled tasks
+                        delay_seconds = 0
+                        if scheduled_for:
+                            delay = (scheduled_for - datetime.now(timezone.utc)).total_seconds()
+                            if delay > 0:
+                                # SQS max delay is 15 minutes (900 seconds)
+                                delay_seconds = min(int(delay), 900)
+                        
+                        # Send message in a separate thread to avoid blocking
+                        import threading
+                        
+                        def send_sqs_message():
+                            try:
+                                loop = asyncio.new_event_loop()
+                                asyncio.set_event_loop(loop)
+                                loop.run_until_complete(sqs_service.send_task_message(
+                                    task_id=task.id,
+                                    task_type=task_type,
+                                    payload=payload,
+                                    priority=priority,
+                                    delay_seconds=delay_seconds
+                                ))
+                                loop.close()
+                                logger.info(f"Task {task.id} sent to SQS successfully")
+                            except Exception as e:
+                                logger.warning(f"Failed to send task {task.id} to SQS: {e}")
+                        
+                        # Run in background thread
+                        thread = threading.Thread(target=send_sqs_message)
+                        thread.daemon = True
+                        thread.start()
+                        
+                    except Exception as e:
+                        # Don't fail task creation if SQS fails
+                        logger.warning(f"Failed to queue task {task.id} for SQS delivery: {e}")
+                
                 return task
                 
             except IntegrityError as e:

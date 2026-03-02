@@ -34,9 +34,16 @@ pytest-cov==4.1.0
 # Logging & Monitoring
 structlog==23.2.0
 
+# AWS Services
+boto3==1.34.34
+botocore==1.34.34
+
 # Task Queue & Background Processing
 celery==5.3.4  # Optional: if using Celery for some tasks
 redis==5.0.1   # Optional: for caching and pub/sub
+
+# Lambda Support
+mangum==0.17.0  # ASGI adapter for Lambda
 
 # Production
 gunicorn==21.2.0
