@@ -50,7 +50,7 @@ jobs:
         pip-audit --format=json --output=pip-audit-report.json || echo "pip-audit completed with warnings"
 
     - name: 📊 Upload security reports
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: security-reports-python
         path: |
@@ -91,7 +91,7 @@ jobs:
         fi
 
     - name: 📊 Upload security reports
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: security-reports-nodejs
         path: |
