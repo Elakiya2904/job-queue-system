@@ -70,7 +70,13 @@ async def start_worker():
     
     # Get credentials from environment variables or use defaults
     worker_id = os.environ.get("WORKER_ID", "worker_01")
-    api_key = os.environ.get("WORKER_API_KEY", "worker_key_123456_secure_token_abcdefghijklmnop")
+    api_key = os.environ.get("WORKER_API_KEY")
+    
+    if not api_key:
+        print("⚠️  ERROR: WORKER_API_KEY environment variable is required!")
+        print("   Set it with: export WORKER_API_KEY='your-secure-worker-key'")
+        return
+    
     api_url = os.environ.get("API_URL", "http://localhost:8002")
     
     # Authenticate before starting

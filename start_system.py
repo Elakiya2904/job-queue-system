@@ -19,7 +19,12 @@ def setup_environment():
     """Set up environment variables for the backend."""
     os.environ["DATABASE_URL"] = "sqlite:///./data/job_queue.db"
     os.environ["PYTHONPATH"] = str(BACKEND_DIR)
-    os.environ["SECRET_KEY"] = "your-super-secret-jwt-key-change-this-in-production"
+    
+    # Set a default SECRET_KEY for development only
+    if not os.environ.get("SECRET_KEY"):
+        print("⚠️  WARNING: Using default SECRET_KEY for development. Set SECRET_KEY environment variable in production!")
+        os.environ["SECRET_KEY"] = "dev-secret-key-change-in-production"
+    
     os.environ["DEBUG"] = "true"
 
 def create_data_dir():
