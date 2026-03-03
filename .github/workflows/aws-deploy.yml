@@ -113,15 +113,25 @@ jobs:
         echo "Installing dependencies..."
         npm install
         
+        echo "Checking directory structure..."
+        ls -la
+        ls -la lib/
+        
         echo "Validating CDK syntax..."
         npm run build
-        cdk synth
+        
+        echo "Checking compiled output..."
+        ls -la *.js || echo "No JS files in root"  
+        ls -la lib/*.js || echo "No JS files in lib"
+        
+        echo "Synthesizing CDK template..."
+        ./node_modules/.bin/cdk synth
         
         echo "Bootstrapping CDK (if needed)..."
-        cdk bootstrap || echo "CDK already bootstrapped"
+        ./node_modules/.bin/cdk bootstrap || echo "CDK already bootstrapped"
         
         echo "Deploying infrastructure..."
-        cdk deploy --all --require-approval never --outputs-file outputs.json
+        ./node_modules/.bin/cdk deploy --all --require-approval never --outputs-file outputs.json
 
     - name: 📤 Save deployment outputs
       working-directory: ./aws/infrastructure
