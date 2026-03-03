@@ -1,0 +1,297 @@
+name: ☁️ AWS Deployment
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - 'aws/**'
+      - '.github/workflows/aws-deploy.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+      deploy_backend:
+        description: 'Deploy backend services'
+        required: false
+        default: true
+        type: boolean
+      deploy_frontend:
+        description: 'Deploy frontend'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  AWS_REGION: us-east-1
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '18'
+
+jobs:
+  # Prerequisites check
+  prerequisites:
+    name: ✅ Prerequisites Check
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.env.outputs.environment }}
+      has_aws_secrets: ${{ steps.secrets.outputs.has_secrets }}
+      
+    steps:
+    - name: 📁 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🎯 Determine environment
+      id: env
+      run: |
+        if [ "${{ github.event.inputs.environment }}" != "" ]; then
+          echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+        else
+          echo "environment=staging" >> $GITHUB_OUTPUT
+        fi
+
+    - name: 🔑 Check AWS secrets
+      id: secrets
+      run: |
+        if [ -n "${{ secrets.AWS_ACCESS_KEY_ID }}" ] && [ -n "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ]; then
+          echo "has_secrets=true" >> $GITHUB_OUTPUT
+          echo "✅ AWS secrets are configured"
+        else
+          echo "has_secrets=false" >> $GITHUB_OUTPUT
+          echo "❌ AWS secrets are missing"
+          echo "::warning::AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY secrets must be configured in repository settings"
+        fi
+
+  # Infrastructure Validation and Deployment
+  deploy-infrastructure:
+    name: 🏗️ Deploy AWS Infrastructure
+    runs-on: ubuntu-latest
+    needs: prerequisites
+    if: needs.prerequisites.outputs.has_aws_secrets == 'true'
+    environment: ${{ needs.prerequisites.outputs.environment }}
+    
+    steps:
+    - name: 📁 Checkout code
+      uses: actions/checkout@v4
+
+    - name: ⚙️ Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: 🔍 Test AWS connection
+      run: |
+        aws sts get-caller-identity
+        echo "✅ AWS connection successful"
+
+    - name: 📦 Setup Node.js for CDK
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+
+    - name: 🚀 Install AWS CDK
+      run: |
+        npm install -g aws-cdk
+        cdk --version
+
+    - name: 🏗️ Validate and Deploy CDK infrastructure
+      working-directory: ./aws/infrastructure
+      run: |
+        export ENVIRONMENT="${{ needs.prerequisites.outputs.environment }}"
+        echo "Installing dependencies..."
+        npm install
+        
+        echo "Validating CDK syntax..."
+        npm run build
+        cdk synth
+        
+        echo "Bootstrapping CDK (if needed)..."
+        cdk bootstrap || echo "CDK already bootstrapped"
+        
+        echo "Deploying infrastructure..."
+        cdk deploy --all --require-approval never --outputs-file outputs.json
+      env:
+        CDK_DEFAULT_REGION: ${{ env.AWS_REGION }}
+        CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
+
+    - name: 📤 Save deployment outputs
+      working-directory: ./aws/infrastructure
+      run: |
+        if [ -f outputs.json ]; then
+          echo "✅ Infrastructure deployment successful"
+          cat outputs.json
+          mkdir -p ../../deployment-outputs
+          cp outputs.json ../../deployment-outputs/
+        else
+          echo "❌ No outputs file generated"
+        fi
+
+    - name: 📦 Upload deployment artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: deployment-outputs-${{ needs.prerequisites.outputs.environment }}
+        path: deployment-outputs/
+
+  # Backend Lambda Deployment
+  deploy-backend:
+    name: ⚡ Deploy Backend Lambda
+    runs-on: ubuntu-latest
+    needs: [prerequisites, deploy-infrastructure]
+    if: needs.prerequisites.outputs.has_aws_secrets == 'true' && (github.event.inputs.deploy_backend == 'true' || github.event.inputs.deploy_backend == null)
+    environment: ${{ needs.prerequisites.outputs.environment }}
+
+    steps:
+    - name: 📁 Checkout code
+      uses: actions/checkout@v4
+
+    - name: ⚙️ Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: 📦 Package Backend Lambda
+      working-directory: ./backend
+      run: |
+        echo "Installing dependencies..."
+        pip install -r requirements.txt -t package/
+        
+        echo "Copying application code..."
+        cp -r app/ package/
+        cp ../aws/lambda/api/lambda_handler.py package/
+        
+        echo "Creating deployment package..."
+        cd package && zip -r ../backend-lambda.zip . && cd ..
+        
+        echo "✅ Backend package created: $(du -h backend-lambda.zip)"
+
+    - name: 🚀 Deploy API Lambda
+      working-directory: ./backend
+      run: |
+        FUNCTION_NAME="job-queue-api-${{ needs.prerequisites.outputs.environment }}"
+        
+        if aws lambda get-function --function-name $FUNCTION_NAME >/dev/null 2>&1; then
+          echo "Updating existing function: $FUNCTION_NAME"
+          aws lambda update-function-code \
+            --function-name $FUNCTION_NAME \
+            --zip-file fileb://backend-lambda.zip
+        else
+          echo "Function $FUNCTION_NAME may not exist yet, will be created by CDK"
+        fi
+
+    - name: 📦 Package Worker Lambda  
+      working-directory: ./backend
+      run: |
+        echo "Creating worker package..."
+        mkdir -p worker-package
+        pip install -r requirements.txt -t worker-package/
+        cp -r app/ worker-package/
+        cp ../aws/lambda/worker/lambda_handler.py worker-package/
+        
+        cd worker-package && zip -r ../worker-lambda.zip . && cd ..
+        echo "✅ Worker package created: $(du -h worker-lambda.zip)"
+
+    - name: 🚀 Deploy Worker Lambda
+      working-directory: ./backend
+      run: |
+        FUNCTION_NAME="job-queue-worker-${{ needs.prerequisites.outputs.environment }}"
+        
+        if aws lambda get-function --function-name $FUNCTION_NAME >/dev/null 2>&1; then
+          echo "Updating existing function: $FUNCTION_NAME"
+          aws lambda update-function-code \
+            --function-name $FUNCTION_NAME \
+            --zip-file fileb://worker-lambda.zip
+        else
+          echo "Function $FUNCTION_NAME may not exist yet, will be created by CDK"
+        fi
+
+  # Frontend Deployment (optional)
+  deploy-frontend:
+    name: 🌐 Deploy Frontend
+    runs-on: ubuntu-latest
+    needs: [prerequisites, deploy-infrastructure]
+    if: needs.prerequisites.outputs.has_aws_secrets == 'true' && (github.event.inputs.deploy_frontend == 'true' || github.event.inputs.deploy_frontend == null)
+    environment: ${{ needs.prerequisites.outputs.environment }}
+
+    steps:
+    - name: 📁 Checkout code
+      uses: actions/checkout@v4
+
+    - name: ⚙️ Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: 📦 Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: ./frontend/package-lock.json
+
+    - name: 📥 Install dependencies
+      working-directory: ./frontend
+      run: npm ci || npm install
+
+    - name: 🏗️ Build frontend
+      working-directory: ./frontend
+      env:
+        NEXT_PUBLIC_API_URL: ${{ secrets.API_GATEWAY_URL || 'https://api-staging.job-queue.aws' }}
+        NODE_ENV: production
+      run: |
+        echo "Building frontend for ${{ needs.prerequisites.outputs.environment }}"
+        npm run build
+
+    - name: 📤 Deploy to S3 (placeholder)
+      working-directory: ./frontend
+      run: |
+        echo "Frontend build completed successfully"
+        echo "Next step: Configure S3 bucket and CloudFront for frontend deployment"
+        ls -la out/ || ls -la .next/ || echo "Build output directory not found"
+
+  # Deployment Summary
+  deployment-summary:
+    name: 📝 Deployment Summary
+    runs-on: ubuntu-latest
+    needs: [prerequisites, deploy-infrastructure, deploy-backend, deploy-frontend]
+    if: always()
+    
+    steps:
+    - name: 📊 Report Results
+      run: |
+        echo "🚀 AWS Deployment Summary"
+        echo "========================"
+        echo "Environment: ${{ needs.prerequisites.outputs.environment }}"
+        echo "AWS Secrets Available: ${{ needs.prerequisites.outputs.has_aws_secrets }}"
+        echo ""
+        echo "Job Results:"
+        echo "- Infrastructure: ${{ needs.deploy-infrastructure.result }}"
+        echo "- Backend: ${{ needs.deploy-backend.result }}"
+        echo "- Frontend: ${{ needs.deploy-frontend.result }}"
+        
+        if [ "${{ needs.prerequisites.outputs.has_aws_secrets }}" != "true" ]; then
+          echo ""
+          echo "⚠️  AWS deployment requires the following secrets to be configured:"
+          echo "   - AWS_ACCESS_KEY_ID"
+          echo "   - AWS_SECRET_ACCESS_KEY"
+          echo "   - AWS_ACCOUNT_ID (optional but recommended)"
+          echo ""
+          echo "Please add these secrets in your repository settings under:"
+          echo "Settings → Secrets and variables → Actions"
+        fi

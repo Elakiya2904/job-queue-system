@@ -6,7 +6,7 @@ const app = new cdk.App();
 
 const environment = process.env.ENVIRONMENT || 'staging';
 const account = process.env.CDK_DEFAULT_ACCOUNT;
-const region = process.env.CDK_DEFAULT_REGION || 'us-east-1'; || 'us-east-1';
+const region = process.env.CDK_DEFAULT_REGION || 'us-east-1';
 
 new JobQueueStack(app, `JobQueueStack-${environment}`, {
   env: {
