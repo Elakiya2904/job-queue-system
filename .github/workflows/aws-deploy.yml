@@ -104,6 +104,10 @@ jobs:
 
     - name: 🏗️ Validate and Deploy CDK infrastructure
       working-directory: ./aws/infrastructure
+      env:
+        CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
+        CDK_DEFAULT_REGION: ${{ env.AWS_REGION }}
+        AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
       run: |
         export ENVIRONMENT="${{ needs.prerequisites.outputs.environment }}"
         echo "Installing dependencies..."
