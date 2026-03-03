@@ -122,9 +122,6 @@ jobs:
         
         echo "Deploying infrastructure..."
         cdk deploy --all --require-approval never --outputs-file outputs.json
-      env:
-        CDK_DEFAULT_REGION: ${{ env.AWS_REGION }}
-        CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
 
     - name: 📤 Save deployment outputs
       working-directory: ./aws/infrastructure
