@@ -24,5 +24,6 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "exclude": ["cdk.out"]
+  "include": ["**/*.ts"],
+  "exclude": ["cdk.out", "node_modules"]
 }
