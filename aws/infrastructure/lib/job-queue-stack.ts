@@ -8,8 +8,6 @@ import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as events from 'aws-cdk-lib/aws-lambda-event-sources';
 import { Construct } from 'constructs';
-import { IpAddresses } from 'aws-cdk-lib/aws-ec2';
-import * as path from 'path';
 
 export class JobQueueStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -19,8 +17,8 @@ export class JobQueueStack extends cdk.Stack {
 
     // VPC for RDS and Lambda
     const vpc = new ec2.Vpc(this, 'JobQueueVPC', {
-      ipAddresses: ec2.IpAddresses.cidr('10.0.0.0/16'),
       maxAzs: 2,
+      cidr: '10.0.0.0/16',
       subnetConfiguration: [
         {
           cidrMask: 24,
@@ -127,7 +125,7 @@ export class JobQueueStack extends cdk.Stack {
       functionName: `job-queue-api-${environment}`,
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'lambda_handler.lambda_handler',
-      code: lambda.Code.fromAsset(path.join(__dirname, '..', '..', 'backend')),
+      code: lambda.Code.fromAsset('../backend'), // Will be replaced in CI/CD
       vpc,
       vpcSubnets: {
         subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
@@ -151,7 +149,7 @@ export class JobQueueStack extends cdk.Stack {
       functionName: `job-queue-worker-${environment}`,
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'lambda_handler.lambda_handler',
-      code: lambda.Code.fromAsset(path.join(__dirname, '..', '..', 'worker')),
+      code: lambda.Code.fromAsset('../worker'), // Will be replaced in CI/CD
       vpc,
       vpcSubnets: {
         subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,

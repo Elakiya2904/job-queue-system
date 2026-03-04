@@ -1,4 +1,16 @@
 #!/usr/bin/env node
+require('dotenv').config({ path: 'C:/Users/vlela/OneDrive/Desktop/job-queue-system/.env.staging' });
+console.log('Loaded AWS_ACCOUNT_ID:', process.env.AWS_ACCOUNT_ID);
+console.log('Environment Variables:', process.env);
+// Log the current working directory to verify the base path
+console.log('Current Working Directory:', process.cwd());
+
+// Check if AWS_ACCOUNT_ID is loaded
+if (!process.env.AWS_ACCOUNT_ID) {
+    console.error('Failed to load AWS_ACCOUNT_ID. Ensure .env.staging exists and is correctly configured.');
+} else {
+    console.log('AWS_ACCOUNT_ID loaded successfully:', process.env.AWS_ACCOUNT_ID);
+}
 "use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -40,36 +52,9 @@ const app = new cdk.App();
 const environment = process.env.ENVIRONMENT || 'staging';
 const account = process.env.CDK_DEFAULT_ACCOUNT || process.env.AWS_ACCOUNT_ID;
 const region = process.env.CDK_DEFAULT_REGION || process.env.AWS_DEFAULT_REGION || 'us-east-1';
-const additionalTags = {
-    Owner: process.env.OWNER || 'DefaultOwner',
-    Application: 'JobQueueSystem',
-};
-
 if (!account) {
     throw new Error('AWS Account ID is required. Set CDK_DEFAULT_ACCOUNT or AWS_ACCOUNT_ID environment variable.');
 }
-
-if (!region) {
-    throw new Error('AWS Region is required. Set CDK_DEFAULT_REGION or AWS_DEFAULT_REGION environment variable.');
-}
-
-const { execSync } = require('child_process');
-
-if (process.env.GITHUB_ACTIONS !== 'true') {
-    // Local-only installation logic here
-    try {
-        console.log('Activating virtual environment...');
-        execSync('cmd /c "C:\\Users\\vlela\\OneDrive\\Desktop\\job-queue-system\\.venv\\Scripts\\Activate.ps1"', { stdio: 'inherit', shell: true });
-
-        console.log('Installing backend dependencies...');
-        execSync('C:/Users/vlela/OneDrive/Desktop/job-queue-system/.venv/Scripts/python.exe -m pip install -r ../backend/requirements.txt', { stdio: 'inherit', shell: true });
-        console.log('Backend dependencies installed successfully.');
-    } catch (error) {
-        console.error('Failed to install backend dependencies:', error);
-        process.exit(1);
-    }
-}
-
 new job_queue_stack_1.JobQueueStack(app, `JobQueueStack-${environment}`, {
     env: {
         account: account,
@@ -78,7 +63,6 @@ new job_queue_stack_1.JobQueueStack(app, `JobQueueStack-${environment}`, {
     tags: {
         Environment: environment,
         Project: 'JobQueueSystem',
-        ...additionalTags,
     },
 });
 //# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiYXBwLmpzIiwic291cmNlUm9vdCI6IiIsInNvdXJjZXMiOlsiYXBwLnRzIl0sIm5hbWVzIjpbXSwibWFwcGluZ3MiOiI7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7Ozs7OztBQUNBLGlEQUFtQztBQUNuQywyREFBc0Q7QUFFdEQsTUFBTSxHQUFHLEdBQUcsSUFBSSxHQUFHLENBQUMsR0FBRyxFQUFFLENBQUM7QUFFMUIsTUFBTSxXQUFXLEdBQUcsT0FBTyxDQUFDLEdBQUcsQ0FBQyxXQUFXLElBQUksU0FBUyxDQUFDO0FBQ3pELE1BQU0sT0FBTyxHQUFHLE9BQU8sQ0FBQyxHQUFHLENBQUMsbUJBQW1CLElBQUksT0FBTyxDQUFDLEdBQUcsQ0FBQyxjQUFjLENBQUM7QUFDOUUsTUFBTSxNQUFNLEdBQUcsT0FBTyxDQUFDLEdBQUcsQ0FBQyxrQkFBa0IsSUFBSSxPQUFPLENBQUMsR0FBRyxDQUFDLGtCQUFrQixJQUFJLFdBQVcsQ0FBQztBQUUvRixJQUFJLENBQUMsT0FBTyxFQUFFLENBQUM7SUFDYixNQUFNLElBQUksS0FBSyxDQUFDLDZGQUE2RixDQUFDLENBQUM7QUFDakgsQ0FBQztBQUVELElBQUksK0JBQWEsQ0FBQyxHQUFHLEVBQUUsaUJBQWlCLFdBQVcsRUFBRSxFQUFFO0lBQ3JELEdBQUcsRUFBRTtRQUNILE9BQU8sRUFBRSxPQUFPO1FBQ2hCLE1BQU0sRUFBRSxNQUFNO0tBQ2Y7SUFDRCxJQUFJLEVBQUU7UUFDSixXQUFXLEVBQUUsV0FBVztRQUN4QixPQUFPLEVBQUUsZ0JBQWdCO0tBQzFCO0NBQ0YsQ0FBQyxDQUFDIiwic291cmNlc0NvbnRlbnQiOlsiIyEvdXNyL2Jpbi9lbnYgbm9kZVxyXG5pbXBvcnQgKiBhcyBjZGsgZnJvbSAnYXdzLWNkay1saWInO1xyXG5pbXBvcnQgeyBKb2JRdWV1ZVN0YWNrIH0gZnJvbSAnLi9saWIvam9iLXF1ZXVlLXN0YWNrJztcclxuXHJcbmNvbnN0IGFwcCA9IG5ldyBjZGsuQXBwKCk7XHJcblxyXG5jb25zdCBlbnZpcm9ubWVudCA9IHByb2Nlc3MuZW52LkVOVklST05NRU5UIHx8ICdzdGFnaW5nJztcclxuY29uc3QgYWNjb3VudCA9IHByb2Nlc3MuZW52LkNES19ERUZBVUxUX0FDQ09VTlQgfHwgcHJvY2Vzcy5lbnYuQVdTX0FDQ09VTlRfSUQ7XHJcbmNvbnN0IHJlZ2lvbiA9IHByb2Nlc3MuZW52LkNES19ERUZBVUxUX1JFR0lPTiB8fCBwcm9jZXNzLmVudi5BV1NfREVGQVVMVF9SRUdJT04gfHwgJ3VzLWVhc3QtMSc7XHJcblxyXG5pZiAoIWFjY291bnQpIHtcclxuICB0aHJvdyBuZXcgRXJyb3IoJ0FXUyBBY2NvdW50IElEIGlzIHJlcXVpcmVkLiBTZXQgQ0RLX0RFRkFVTFRfQUNDT1VOVCBvciBBV1NfQUNDT1VOVF9JRCBlbnZpcm9ubWVudCB2YXJpYWJsZS4nKTtcclxufVxyXG5cclxubmV3IEpvYlF1ZXVlU3RhY2soYXBwLCBgSm9iUXVldWVTdGFjay0ke2Vudmlyb25tZW50fWAsIHtcclxuICBlbnY6IHtcclxuICAgIGFjY291bnQ6IGFjY291bnQsXHJcbiAgICByZWdpb246IHJlZ2lvbixcclxuICB9LFxyXG4gIHRhZ3M6IHtcclxuICAgIEVudmlyb25tZW50OiBlbnZpcm9ubWVudCxcclxuICAgIFByb2plY3Q6ICdKb2JRdWV1ZVN5c3RlbScsXHJcbiAgfSxcclxufSk7Il19
