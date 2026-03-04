@@ -102,6 +102,15 @@ jobs:
         npm install -g aws-cdk
         cdk --version
 
+    - name: 🔍 Validate Backend Directory
+      run: |
+        if [ ! -d "./backend" ]; then
+          echo "❌ Backend directory not found!"
+          exit 1
+        else
+          echo "✅ Backend directory exists."
+        fi
+
     - name: 🏗️ Validate and Deploy CDK infrastructure
       working-directory: ./aws/infrastructure
       env:
