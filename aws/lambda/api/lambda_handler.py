@@ -18,13 +18,6 @@ handler = Mangum(app, lifespan="off")
 
 def lambda_handler(event, context):
     """
-    AWS Lambda entry point for API Gateway requests.
-    
-    Args:
-        event: API Gateway request event
-        context: Lambda context
-        
-    Returns:
-        API Gateway response
+    AWS Lambda entry point.
     """
     return handler(event, context)

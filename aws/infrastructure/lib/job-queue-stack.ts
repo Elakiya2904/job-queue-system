@@ -163,7 +163,7 @@ export class JobQueueStack extends cdk.Stack {
         AWS_REGION: this.region,
         ENVIRONMENT: environment,
       },
-      logRetention: logs.RetentionDays.ONE_WEEK,
+      logGroup: logGroup,
     });
 
     // SQS Event Source for Worker Lambda

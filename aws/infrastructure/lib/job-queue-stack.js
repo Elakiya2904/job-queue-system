@@ -136,9 +136,14 @@ class JobQueueStack extends cdk.Stack {
         // Allow Lambda to access RDS
         dbCluster.secret?.grantRead(lambdaRole);
         // API Lambda Function
-        const logGroup = new logs.LogGroup(this, 'JobQueueApiLambdaLogGroup', {
-            retention: logs.RetentionDays.ONE_WEEK,
+        const apiLogGroup = new logs.LogGroup(this, 'JobQueueApiLambdaLogGroup', {
+            retention: logs.RetentionDays.ONE_WEEK
         });
+
+        const workerLogGroup = new logs.LogGroup(this, 'WorkerLambdaLogGroup', {
+            retention: logs.RetentionDays.ONE_WEEK
+        });
+
         // Update Lambda asset paths
         const apiLambda = new lambda.Function(this, 'JobQueueApiLambda', {
             functionName: `job-queue-api-${environment}`,
@@ -160,7 +165,7 @@ class JobQueueStack extends cdk.Stack {
                 ENVIRONMENT: environment,
                 // AWS_REGION removed to resolve ValidationError
             },
-            logGroup: logGroup,
+            logGroup: apiLogGroup,
         });
 
         const workerLambda = new lambda.Function(this, 'JobQueueWorkerLambda', {
@@ -180,7 +185,7 @@ class JobQueueStack extends cdk.Stack {
                 DATABASE_URL: `postgresql://jobqueue_admin:password@${dbCluster.clusterEndpoint.hostname}:5432/jobqueue`,
                 ENVIRONMENT: environment,
             },
-            logRetention: logs.RetentionDays.ONE_WEEK,
+            logGroup: workerLogGroup,
         });
         // SQS Event Source for Worker Lambda
         workerLambda.addEventSource(new events.SqsEventSource(taskQueue, {
