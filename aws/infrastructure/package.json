@@ -17,7 +17,7 @@
     "aws-cdk": "^2.100.0"
   },
   "dependencies": {
-    "aws-cdk-lib": "latest",
-    "constructs": "latest"
+    "aws-cdk-lib": "^2.143.0",
+    "constructs": "^10.0.0"
   }
 }
