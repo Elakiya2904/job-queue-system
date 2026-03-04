@@ -125,7 +125,7 @@ python -m uvicorn app.main:app --reload
 ### Create Test Task
 ```bash
 curl -X POST "http://localhost:8001/api/v1/tasks" \
-  -H "Authorization: Bearer your-token" \
+  -H "Authorization: Bearer <REDACTED>" \
   -H "Content-Type: application/json" \
   -d '{
     "task_type": "example_task",
