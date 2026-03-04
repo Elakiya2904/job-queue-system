@@ -111,6 +111,15 @@ jobs:
           echo "✅ Backend directory exists."
         fi
 
+    - name: 🗂️ Ensure Backend Directory is in Place
+      run: |
+        if [ ! -d "./aws/backend" ]; then
+          echo "Copying backend directory to aws/backend..."
+          cp -r ./backend ./aws/backend
+        else
+          echo "Backend directory already in place."
+        fi
+
     - name: 🏗️ Validate and Deploy CDK infrastructure
       working-directory: ./aws/infrastructure
       env:
