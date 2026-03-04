@@ -4,8 +4,8 @@ import { Analytics } from '@vercel/analytics/next'
 import { AuthProvider } from './auth-context'
 import './globals.css'
 
-const _geist = Roboto({ subsets: ["latin"] });
-const _geistMono = Roboto_Mono({ subsets: ["latin"] });
+const _geist = Roboto({ subsets: ["latin"], weight: ["400", "500", "700"] });
+const _geistMono = Roboto_Mono({ subsets: ["latin"], weight: ["400", "500"] });
 
 export const metadata: Metadata = {
   title: 'Job Queue Dashboard',

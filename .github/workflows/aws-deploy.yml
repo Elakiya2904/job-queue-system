@@ -143,6 +143,7 @@ jobs:
           cp outputs.json ../../deployment-outputs/
         else
           echo "❌ No outputs file generated"
+          echo "::error::Deployment outputs are missing. Check the CDK deployment logs."
         fi
 
     - name: 📦 Upload deployment artifacts

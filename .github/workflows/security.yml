@@ -76,18 +76,18 @@ jobs:
       working-directory: ./frontend
       run: |
         if [ -f package.json ]; then
-          npm audit --audit-level=moderate --json > npm-audit-frontend.json || echo "NPM audit completed with warnings"
+          npm audit --audit-level=moderate --json > npm-audit-frontend.json || echo "::warning::NPM audit completed with warnings. Check the audit logs."
         else
-          echo "No package.json found in frontend"
+          echo "::error::No package.json found in frontend. Skipping audit."
         fi
 
-    - name: 🔍 Infrastructure npm audit  
+    - name: 🔍 Infrastructure npm audit
       working-directory: ./aws/infrastructure
       run: |
         if [ -f package.json ]; then
-          npm audit --audit-level=moderate --json > npm-audit-infrastructure.json || echo "NPM audit completed with warnings"
+          npm audit --audit-level=moderate --json > npm-audit-infrastructure.json || echo "::warning::NPM audit completed with warnings. Check the audit logs."
         else
-          echo "No package.json found in infrastructure"
+          echo "::error::No package.json found in infrastructure. Skipping audit."
         fi
 
     - name: 📊 Upload security reports

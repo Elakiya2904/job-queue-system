@@ -63,7 +63,7 @@ jobs:
         export DATABASE_URL="sqlite:///./test_job_queue.db"
         export SECRET_KEY="test-secret-key-for-github-actions"
         export ENVIRONMENT="testing"
-        pytest --cov=app --cov-report=xml --cov-report=term-missing || echo "Some tests may have failed but continuing..."
+        pytest --cov=app --cov-report=xml --cov-report=term-missing || echo "::warning::Some tests may have failed. Check the pytest logs."
 
   # Frontend Testing and Building
   frontend-tests:
@@ -91,10 +91,12 @@ jobs:
       run: npm run lint || echo "Linting issues found but continuing..."
 
     - name: 🏗️ Build application
-      run: npm run build
+      run: |
+        npm run build || echo "::error::Frontend build failed. Check the build logs."
 
     - name: 🧪 Run tests (if available)
-      run: npm test || echo "No tests configured or tests failed"
+      run: |
+        npm test || echo "::warning::No tests configured or tests failed. Check the test logs."
 
   # Infrastructure validation
   infrastructure-check:
@@ -121,7 +123,7 @@ jobs:
     - name: 🔍 Validate CDK syntax
       run: |
         npm run build
-        cdk synth || echo "CDK synthesis issues found"
+        cdk synth || echo "::warning::CDK synthesis issues found. Check the CDK logs."
 
   # Summary job
   ci-summary:
