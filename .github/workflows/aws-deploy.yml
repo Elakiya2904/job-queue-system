@@ -113,11 +113,11 @@ jobs:
 
     - name: 🗂️ Ensure Backend Directory is in Place
       run: |
-        if [ ! -d "./aws/backend" ]; then
-          echo "Copying backend directory to aws/backend..."
-          cp -r ./backend ./aws/backend
+        if [ ! -d "./backend" ]; then
+          echo "❌ Backend directory not found!"
+          exit 1
         else
-          echo "Backend directory already in place."
+          echo "✅ Backend directory exists."
         fi
 
     - name: 🏗️ Validate and Deploy CDK infrastructure

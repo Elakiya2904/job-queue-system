@@ -8,6 +8,7 @@ import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as events from 'aws-cdk-lib/aws-lambda-event-sources';
 import { Construct } from 'constructs';
+import { IpAddresses } from 'aws-cdk-lib/aws-ec2';
 
 export class JobQueueStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -17,8 +18,8 @@ export class JobQueueStack extends cdk.Stack {
 
     // VPC for RDS and Lambda
     const vpc = new ec2.Vpc(this, 'JobQueueVPC', {
+      ipAddresses: ec2.IpAddresses.cidr('10.0.0.0/16'),
       maxAzs: 2,
-      cidr: '10.0.0.0/16',
       subnetConfiguration: [
         {
           cidrMask: 24,
