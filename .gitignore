@@ -13,6 +13,7 @@ eggs/
 lib/
 lib64/
 !aws/infrastructure/lib/
+!frontend/lib/
 parts/
 sdist/
 var/
