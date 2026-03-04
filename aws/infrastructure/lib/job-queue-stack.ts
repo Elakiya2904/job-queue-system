@@ -117,6 +117,10 @@ export class JobQueueStack extends cdk.Stack {
     dbCluster.secret?.grantRead(lambdaRole);
 
     // API Lambda Function
+    const logGroup = new logs.LogGroup(this, 'JobQueueApiLambdaLogGroup', {
+      retention: logs.RetentionDays.ONE_WEEK,
+    });
+
     const apiLambda = new lambda.Function(this, 'JobQueueApiLambda', {
       functionName: `job-queue-api-${environment}`,
       runtime: lambda.Runtime.PYTHON_3_11,
@@ -137,7 +141,7 @@ export class JobQueueStack extends cdk.Stack {
         AWS_REGION: this.region,
         ENVIRONMENT: environment,
       },
-      logRetention: logs.RetentionDays.ONE_WEEK,
+      logGroup: logGroup,
     });
 
     // Worker Lambda Function
