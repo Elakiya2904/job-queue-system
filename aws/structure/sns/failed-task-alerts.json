@@ -1,0 +1,12 @@
+{
+  "TopicName": "failed-task-alerts",
+  "Attributes": {
+    "DisplayName": "Failed Task Alerts"
+  },
+  "Subscriptions": [
+    {
+      "Protocol": "email",
+      "Endpoint": "alerts@example.com"
+    }
+  ]
+}

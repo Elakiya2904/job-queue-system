@@ -9,7 +9,7 @@ on:
 
 env:
   PYTHON_VERSION: '3.11'
-  NODE_VERSION: '18'
+  NODE_VERSION: '20'
 
 jobs:
   # Backend Testing and Linting
@@ -121,6 +121,9 @@ jobs:
         npm install
 
     - name: 🔍 Validate CDK syntax
+      env:
+        CDK_DEFAULT_ACCOUNT: '153499898730'
+        CDK_DEFAULT_REGION: 'ap-south-1'
       run: |
         npm run build
         cdk synth || echo "::warning::CDK synthesis issues found. Check the CDK logs."

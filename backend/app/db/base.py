@@ -7,12 +7,10 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
 
-# SQLAlchemy engine with SQLite optimizations
+# SQLAlchemy engine
 engine = create_engine(
-    settings.database_url, 
+    settings.database_url,
     echo=True,
-    # SQLite specific configurations
-    connect_args={"check_same_thread": False}
 )
 
 # Session factory

@@ -1,7 +1,7 @@
 export interface Task {
   id: string
   type: string
-  status: 'queued' | 'processing' | 'completed' | 'failed' | 'failed_permanent'
+  status: 'queued' | 'processing' | 'completed' | 'failed' | 'failed_permanent' | 'in_progress' | 'dead_letter'
   retry_count: number
   created_at: string
   locked_by?: string

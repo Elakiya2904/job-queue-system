@@ -38,12 +38,22 @@ class Settings(BaseSettings):
     
     # AWS Configuration (only used when queue_type = "sqs")
     aws_region: Optional[str] = Field(default=None, alias="AWS_REGION")
+    aws_account_id: Optional[str] = Field(default=None, alias="AWS_ACCOUNT_ID")
     sqs_queue_url: Optional[str] = Field(default=None, alias="SQS_QUEUE_URL")
     sqs_dlq_url: Optional[str] = Field(default=None, alias="SQS_DLQ_URL")
-    
+
+    # AWS SNS Configuration
+    sns_topic_arn: Optional[str] = Field(default=None, alias="SNS_TOPIC_ARN")
+
+    # AWS CloudWatch Configuration
+    cloudwatch_log_group: Optional[str] = Field(default="/job-queue-system/app", alias="CLOUDWATCH_LOG_GROUP")
+    cloudwatch_log_retention_days: int = Field(default=7, alias="CLOUDWATCH_LOG_RETENTION_DAYS")
+
     # Lambda Configuration
     is_lambda: bool = Field(default=False, alias="IS_LAMBDA")
     lambda_task_root: Optional[str] = Field(default=None, alias="LAMBDA_TASK_ROOT")
+    lambda_function_arn: Optional[str] = Field(default=None, alias="LAMBDA_FUNCTION_ARN")
+    lambda_execution_role: Optional[str] = Field(default=None, alias="LAMBDA_EXECUTION_ROLE")
     
     # CORS
     allowed_origins: list[str] = [

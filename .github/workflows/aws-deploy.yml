@@ -30,9 +30,9 @@ on:
         type: boolean
 
 env:
-  AWS_REGION: us-east-1
+  AWS_REGION: ap-south-1
   PYTHON_VERSION: '3.11'
-  NODE_VERSION: '18'
+  NODE_VERSION: '20'
 
 jobs:
   # Prerequisites check
@@ -81,7 +81,7 @@ jobs:
       uses: actions/checkout@v4
 
     - name: ⚙️ Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v2
+      uses: aws-actions/configure-aws-credentials@v4
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -103,15 +103,6 @@ jobs:
         cdk --version
 
     - name: 🔍 Validate Backend Directory
-      run: |
-        if [ ! -d "./backend" ]; then
-          echo "❌ Backend directory not found!"
-          exit 1
-        else
-          echo "✅ Backend directory exists."
-        fi
-
-    - name: 🗂️ Ensure Backend Directory is in Place
       run: |
         if [ ! -d "./backend" ]; then
           echo "❌ Backend directory not found!"
@@ -166,7 +157,7 @@ jobs:
       uses: actions/checkout@v4
 
     - name: ⚙️ Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v2
+      uses: aws-actions/configure-aws-credentials@v4
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -245,7 +236,7 @@ jobs:
       uses: actions/checkout@v4
 
     - name: ⚙️ Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v2
+      uses: aws-actions/configure-aws-credentials@v4
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}

@@ -120,7 +120,7 @@ export default function WorkersPage() {
     const healthyWorkers = (stats.active || 0) + (stats.idle || 0)
     const healthPercentage = Math.round((healthyWorkers / stats.total) * 100)
     
-    return { ...stats, avgTasksProcessed, healthPercentage }
+    return { ...stats, avgTasksProcessed, healthPercentage } as Record<string, number> & { avgTasksProcessed: number; healthPercentage: number }
   }, [workers])
 
   const handleRefresh = async () => {

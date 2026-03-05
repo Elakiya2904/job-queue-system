@@ -7,20 +7,45 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8000:8000"
-    env_file:
-      - .env
+    environment:
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - DATABASE_URL=postgresql://user:password@db:5432/job_queue
+      - SECRET_KEY=dev-secret-key-change-in-production
+      - QUEUE_TYPE=sqs
+      - AWS_REGION=ap-south-1
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - SQS_QUEUE_URL=https://sqs.ap-south-1.amazonaws.com/153499898730/JobQueue
+      - SQS_DLQ_URL=https://sqs.ap-south-1.amazonaws.com/153499898730/JobQueue-DLQ
+      - SNS_TOPIC_ARN=arn:aws:sns:ap-south-1:153499898730:NotificationsTopic
+      - CLOUDWATCH_LOG_GROUP=/job-queue-system/app
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+    restart: unless-stopped
 
   worker:
     build:
-      context: ./worker
+      context: ./backend
       dockerfile: Dockerfile
-    env_file:
-      - .env
+    command: python start_background_services.py
+    environment:
+      - ENVIRONMENT=development
+      - DATABASE_URL=postgresql://user:password@db:5432/job_queue
+      - QUEUE_TYPE=sqs
+      - AWS_REGION=ap-south-1
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - SQS_QUEUE_URL=https://sqs.ap-south-1.amazonaws.com/153499898730/JobQueue
+      - SQS_DLQ_URL=https://sqs.ap-south-1.amazonaws.com/153499898730/JobQueue-DLQ
+      - SNS_TOPIC_ARN=arn:aws:sns:ap-south-1:153499898730:NotificationsTopic
     depends_on:
-      - backend
-      - db
+      db:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    restart: unless-stopped
 
   frontend:
     build:
@@ -28,13 +53,14 @@ services:
       dockerfile: Dockerfile
     ports:
       - "3000:3000"
-    env_file:
-      - .env.local
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
     depends_on:
       - backend
+    restart: unless-stopped
 
   db:
-    image: postgres:15
+    image: postgres:15-alpine
     environment:
       POSTGRES_USER: user
       POSTGRES_PASSWORD: password
@@ -43,6 +69,12 @@ services:
       - "5432:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d job_queue"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
 
 volumes:
   db_data:

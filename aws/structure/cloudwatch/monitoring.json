@@ -1,0 +1,29 @@
+{
+  "LambdaMonitoring": {
+    "Metrics": [
+      "Invocations",
+      "Errors",
+      "Duration"
+    ],
+    "Alarms": {
+      "ErrorAlarm": {
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "EvaluationPeriods": 1
+      }
+    }
+  },
+  "SQSTaskQueueMonitoring": {
+    "Metrics": [
+      "ApproximateNumberOfMessagesVisible",
+      "NumberOfMessagesDeleted"
+    ],
+    "Alarms": {
+      "MessageBacklogAlarm": {
+        "Threshold": 100,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "EvaluationPeriods": 1
+      }
+    }
+  }
+}
