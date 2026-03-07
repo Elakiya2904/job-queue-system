@@ -45,6 +45,7 @@ class Task(Base):
     locked_by = Column(String(50), nullable=True, index=True)
     locked_at = Column(DateTime(timezone=True), nullable=True, index=True)
     lock_timeout = Column(Integer, nullable=True)  # seconds
+    completed_by = Column(String(50), nullable=True, index=True)  # worker who completed the task
     
     # Ownership and tracing
     created_by = Column(String(50), nullable=False, index=True)

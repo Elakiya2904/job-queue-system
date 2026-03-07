@@ -19,21 +19,21 @@ class UserSignup(BaseModel):
     role: Optional[str] = Field(default="user", description="User role")
 
 
-class TokenResponse(BaseModel):
-    """Token response schema."""
-    access_token: str = Field(..., description="JWT access token")
-    refresh_token: str = Field(..., description="JWT refresh token") 
-    token_type: str = Field(default="Bearer", description="Token type")
-    expires_in: int = Field(..., description="Token expiration time in seconds")
-    user: "UserInfo" = Field(..., description="User information")
-
-
 class UserInfo(BaseModel):
     """User information schema."""
     id: str = Field(..., description="User ID")
     email: str = Field(..., description="User email")
     role: str = Field(..., description="User role")
     created_at: str = Field(..., description="User creation timestamp")
+
+
+class TokenResponse(BaseModel):
+    """Token response schema."""
+    access_token: str = Field(..., description="JWT access token")
+    refresh_token: str = Field(..., description="JWT refresh token") 
+    token_type: str = Field(default="Bearer", description="Token type")
+    expires_in: int = Field(..., description="Token expiration time in seconds")
+    user: UserInfo = Field(..., description="User information")
 
 
 class RefreshTokenRequest(BaseModel):

@@ -8,10 +8,11 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException, status, Depends, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, and_
+from sqlalchemy import or_, and_, func, text
 from ..dependencies import get_current_user, get_db
 from ..services.task_service import TaskService
 from ..models.task import Task
+from ..models.worker import Worker
 from ..schemas.task import (
     TaskCreate, 
     TaskResponse, 
@@ -123,6 +124,7 @@ async def list_tasks(
     priority: Optional[int] = Query(None, ge=1, le=4, description="Filter by priority"),
     created_by: Optional[str] = Query(None, description="Filter by creator"),
     locked_by: Optional[str] = Query(None, description="Filter by worker that locked the task"),
+    completed_by: Optional[str] = Query(None, description="Filter by worker that completed the task"),
     correlation_id: Optional[str] = Query(None, description="Filter by correlation ID"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of tasks to return"),
     offset: int = Query(0, ge=0, description="Number of tasks to skip"),
@@ -187,6 +189,8 @@ async def list_tasks(
             query = query.filter(Task.created_by == created_by)
         if locked_by:
             query = query.filter(Task.locked_by == locked_by)
+        if completed_by:
+            query = query.filter(Task.completed_by == completed_by)
         
         # Get total count before pagination
         total_count = query.count()
@@ -232,9 +236,10 @@ async def list_tasks(
                 failed_at=task.failed_at,
                 locked_by=task.locked_by,
                 locked_at=task.locked_at,
+                completed_by=task.completed_by,
                 created_by=str(task.created_by),
                 correlation_id=task.correlation_id,
-                error_message=None  # Not available in the model yet
+                error_message=task.error_message
             ))
         
         return TaskListResponse(
@@ -590,10 +595,21 @@ async def perform_task_action(
         # Perform action based on type
         if action_request.action == "cancel":
             task.status = "cancelled"
+        elif action_request.action == "reset":
+            # Reset stuck in_progress task back to queued
+            task.status = "queued"
+            task.locked_by = None
+            task.locked_at = None
+            task.lock_timeout = None
+            task.started_at = None
+            task.progress = None
+            task.error_message = None
         elif action_request.action == "retry":
             task.status = "queued"
             task.retry_count += 1
-            task.lock_timeout = None  # Clear any existing lock
+            task.locked_by = None
+            task.locked_at = None
+            task.lock_timeout = None
         elif action_request.action == "reschedule":
             if not action_request.scheduled_for:
                 raise HTTPException(
@@ -692,13 +708,28 @@ async def get_worker_tasks(
             query = query.filter(Task.priority >= priority_min)
         
         # Exclude locked tasks (or those with non-expired locks)
+        # Use database-agnostic date math by detecting the dialect
+        dialect_name = db.bind.dialect.name.lower()
+        
+        if dialect_name == "sqlite":
+            # SQLite: compare unix timestamps
+            lock_check = text(
+                "CAST(STRFTIME('%s', :lock_now) AS INTEGER) >= "
+                "CAST(STRFTIME('%s', tasks.locked_at) AS INTEGER) + tasks.lock_timeout"
+            ).bindparams(lock_now=now)
+        else:
+            # PostgreSQL and other databases: use EXTRACT(EPOCH FROM ...)
+            lock_check = text(
+                "EXTRACT(EPOCH FROM :lock_now) >= EXTRACT(EPOCH FROM tasks.locked_at) + tasks.lock_timeout"
+            ).bindparams(lock_now=now)
+        
         query = query.filter(
             or_(
                 Task.locked_at.is_(None),
                 and_(
                     Task.locked_at.isnot(None),
                     Task.lock_timeout.isnot(None),
-                    Task.locked_at + Task.lock_timeout < now
+                    lock_check
                 )
             )
         )
@@ -765,6 +796,14 @@ async def claim_task(
                     detail=f"Task is already locked by worker {task.locked_by}"
                 )
         
+        # Only allow pre-registered workers to claim tasks — check BEFORE modifying the task
+        worker = db.query(Worker).filter(Worker.id == claim_request.worker_id).first()
+        if not worker:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Worker '{claim_request.worker_id}' is not registered. Please ask an admin to register you in Worker Management."
+            )
+        
         # Claim the task
         now = datetime.now(timezone.utc)
         task.status = "in_progress" 
@@ -773,6 +812,11 @@ async def claim_task(
         task.lock_timeout = claim_request.lock_timeout
         task.started_at = now
         task.updated_at = now
+        worker.status = "active"
+        worker.current_task_id = task.id
+        worker.last_heartbeat = now
+        worker.last_seen_at = now
+        worker.updated_at = now
         
         db.commit()
         
@@ -785,6 +829,7 @@ async def claim_task(
         )
         
     except HTTPException:
+        db.rollback()
         raise
     except Exception as e:
         db.rollback()
@@ -884,6 +929,7 @@ async def complete_task(
         
         # Complete the task
         now = datetime.now(timezone.utc)
+        task.completed_by = task.locked_by  # preserve who did the work
         task.status = "completed"
         task.completed_at = now
         task.updated_at = now
@@ -981,4 +1027,42 @@ async def fail_task(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to mark task as failed: {str(e)}"
+        )
+
+
+@router.delete(
+    "/{task_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete task",
+    description="Permanently delete a task (admin only)"
+)
+async def delete_task(
+    task_id: str,
+    db: Session = Depends(get_db),
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Permanently delete a task from the database. Admin only."""
+    if current_user.get("role") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required"
+        )
+    try:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if not task:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Task not found"
+            )
+        db.delete(task)
+        db.commit()
+        return None
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to delete task {task_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete task: {str(e)}"
         )

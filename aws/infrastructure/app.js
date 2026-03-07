@@ -1,16 +1,4 @@
 #!/usr/bin/env node
-require('dotenv').config({ path: 'C:/Users/vlela/OneDrive/Desktop/job-queue-system/.env.staging' });
-console.log('Loaded AWS_ACCOUNT_ID:', process.env.AWS_ACCOUNT_ID);
-console.log('Environment Variables:', process.env);
-// Log the current working directory to verify the base path
-console.log('Current Working Directory:', process.cwd());
-
-// Check if AWS_ACCOUNT_ID is loaded
-if (!process.env.AWS_ACCOUNT_ID) {
-    console.error('Failed to load AWS_ACCOUNT_ID. Ensure .env.staging exists and is correctly configured.');
-} else {
-    console.log('AWS_ACCOUNT_ID loaded successfully:', process.env.AWS_ACCOUNT_ID);
-}
 "use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;

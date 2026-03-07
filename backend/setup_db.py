@@ -47,13 +47,25 @@ def list_tables():
     """List all tables in the database."""
     try:
         with engine.connect() as conn:
-            # Get table names for SQLite
-            result = conn.execute(text("""
-                SELECT name as table_name 
-                FROM sqlite_master 
-                WHERE type='table' AND name NOT LIKE 'sqlite_%'
-                ORDER BY name
-            """))
+            dialect_name = engine.dialect.name.lower()
+            
+            if dialect_name == "sqlite":
+                # SQLite: use sqlite_master
+                result = conn.execute(text("""
+                    SELECT name as table_name 
+                    FROM sqlite_master 
+                    WHERE type='table' AND name NOT LIKE 'sqlite_%'
+                    ORDER BY name
+                """))
+            else:
+                # PostgreSQL and other databases: use information_schema
+                result = conn.execute(text("""
+                    SELECT table_name 
+                    FROM information_schema.tables 
+                    WHERE table_schema = 'public'
+                    ORDER BY table_name
+                """))
+            
             tables = [row[0] for row in result]
             
             if tables:

@@ -16,6 +16,7 @@ import time
 
 from .core.config import settings
 from .api import auth, tasks, workers, admin
+from .services.background_services import BackgroundServices
 
 
 # Configure logging
@@ -53,26 +54,30 @@ class LoggingMiddleware(BaseHTTPMiddleware):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan management."""
-    
+    import asyncio
+
     # Startup
     logger.info("Starting Job Queue System API...")
     logger.info(f"Environment: {'Development' if settings.debug else 'Production'}")
     logger.info(f"Database URL: {settings.database_url.split('@')[0]}@...")  # Hide credentials
-    
-    # TODO: Add any startup tasks here
-    # - Database connection verification
-    # - Background service initialization
-    # - Worker health checks
-    
+
+    # Start background services (stale lock recovery, worker health monitoring)
+    bg_services = BackgroundServices()
+    bg_task = asyncio.create_task(bg_services.start())
+    app.state.bg_services = bg_services
+    app.state.bg_task = bg_task
+    logger.info("Background services started")
+
     yield
-    
+
     # Shutdown
     logger.info("Shutting down Job Queue System API...")
-    
-    # TODO: Add any cleanup tasks here
-    # - Close database connections
-    # - Stop background services
-    # - Graceful worker shutdown
+    await bg_services.stop()
+    bg_task.cancel()
+    try:
+        await bg_task
+    except asyncio.CancelledError:
+        pass
 
 
 # Create FastAPI application

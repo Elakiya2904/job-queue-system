@@ -269,7 +269,7 @@ class TaskService:
                 
                 # Lock the task for this worker
                 attempt_id = f"attempt_{task.id}_{int(now.timestamp() * 1000)}"
-                lock_timeout = min(task.timeout + 30, 3600)  # Add 30s buffer, max 1 hour
+                lock_timeout = min(task.timeout, 3600)  # Expire when task timeout is reached
                 
                 # Update task with lock information
                 task.status = "processing"
@@ -539,69 +539,105 @@ class TaskService:
     
     def recover_stale_locks(self, max_age_hours: int = 1) -> int:
         """
-        Recover tasks with stale locks and requeue them.
-        
-        Background process to handle worker crashes and network issues.
-        
+        Recover tasks with stale locks (worker disconnected/crashed).
+
+        For each stale task:
+        - Marks the open TaskAttempt as failed (WORKER_DISCONNECTED)
+        - Increments retry_count
+        - Re-queues with exponential backoff if retry_count < max_retries
+        - Moves to dead letter queue when retry_count >= max_retries
+
         Args:
-            max_age_hours: Maximum age of lock before considering it stale
-            
+            max_age_hours: Unused, kept for backwards-compatibility.
+
         Returns:
-            Number of tasks recovered
+            Number of tasks processed
         """
-        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
         recovered_count = 0
+        now = datetime.now(timezone.utc)
         
         with self.get_session() as session:
             try:
-                # Find tasks with stale locks
+                # Find tasks whose lock timeout has expired (worker closed/disconnected)
                 stale_tasks = session.query(Task).filter(
                     and_(
                         Task.status == "processing",
                         Task.locked_at.is_not(None),
                         Task.lock_timeout.is_not(None),
-                        # Lock has been expired for more than max_age_hours
-                        func.extract('epoch', cutoff_time) >= 
+                        # lock_timeout seconds have passed since locked_at
+                        func.extract('epoch', now) >=
                         func.extract('epoch', Task.locked_at) + Task.lock_timeout
                     )
                 ).with_for_update().all()
                 
                 for task in stale_tasks:
-                    # Check if this should be moved to DLQ due to extended staleness
-                    lock_age = (datetime.now(timezone.utc) - task.locked_at).total_seconds()
-                    
-                    if lock_age > self.STALE_LOCK_THRESHOLD:
-                        # Move to dead letter queue
+                    lock_age = (now - task.locked_at).total_seconds()
+                    worker_id = task.locked_by
+                    error_message = f"Worker disconnected or timed out (lock stale for {lock_age:.0f}s)"
+
+                    # Mark the in-progress attempt as failed
+                    open_attempt = session.query(TaskAttempt).filter(
+                        and_(
+                            TaskAttempt.task_id == task.id,
+                            TaskAttempt.worker_id == worker_id,
+                            TaskAttempt.completed_at.is_(None),
+                            TaskAttempt.failed_at.is_(None)
+                        )
+                    ).first()
+
+                    if open_attempt:
+                        open_attempt.fail("WORKER_DISCONNECTED", error_message)
+
+                    # Clear lock
+                    task.locked_by = None
+                    task.locked_at = None
+                    task.lock_timeout = None
+                    task.updated_at = now
+
+                    # Increment retry count
+                    task.retry_count += 1
+                    task.error_message = error_message
+
+                    if task.retry_count >= task.max_retries:
+                        # Max retries exceeded — move to dead letter queue
                         dead_letter = DeadLetterEntry.create_from_task(
                             task=task,
-                            failure_reason="STALE_LOCK_TIMEOUT",
-                            last_error_code="STALE_LOCK",
-                            last_error_message=f"Lock stale for {lock_age:.0f} seconds",
-                            last_worker_id=task.locked_by
+                            failure_reason="MAX_RETRIES_EXCEEDED",
+                            last_error_code="WORKER_DISCONNECTED",
+                            last_error_message=error_message,
+                            last_worker_id=worker_id
                         )
-                        
                         task.status = "failed_permanent"
-                        task.failed_at = datetime.now(timezone.utc)
+                        task.failed_at = now
                         session.add(dead_letter)
-                        
-                        logger.warning(f"Task {task.id} moved to DLQ due to stale lock ({lock_age:.0f}s)")
+                        logger.warning(
+                            f"Task {task.id} moved to DLQ after {task.retry_count} failed attempts "
+                            f"(max_retries={task.max_retries})"
+                        )
                     else:
-                        # Requeue for retry
+                        # Re-queue for retry with exponential backoff
+                        import random
+                        delay = min(
+                            self.BASE_RETRY_DELAY * (2 ** (task.retry_count - 1)),
+                            self.MAX_RETRY_DELAY
+                        )
+                        jitter = delay * self.RETRY_JITTER * (random.random() * 2 - 1)
+                        retry_time = now + timedelta(seconds=int(delay + jitter))
+
                         task.status = "queued"
-                        task.locked_by = None
-                        task.locked_at = None
-                        task.lock_timeout = None
+                        task.scheduled_for = retry_time
                         task.started_at = None
-                        task.updated_at = datetime.now(timezone.utc)
-                        
-                        logger.info(f"Recovered stale task {task.id} from lock by {task.locked_by}")
-                    
+                        logger.info(
+                            f"Task {task.id} re-queued for retry #{task.retry_count}/{task.max_retries} "
+                            f"at {retry_time.isoformat()} (worker {worker_id} disconnected)"
+                        )
+
                     recovered_count += 1
                 
                 session.commit()
                 
                 if recovered_count > 0:
-                    logger.info(f"Recovered {recovered_count} tasks with stale locks")
+                    logger.info(f"Stale lock recovery: {recovered_count} tasks processed")
                 
                 return recovered_count
                 

@@ -7,11 +7,9 @@ that keep the system healthy and performant.
 
 import asyncio
 import logging
-import signal
 import sys
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
-from contextlib import asynccontextmanager
 
 from .task_service import TaskService
 from .worker_service import WorkerService
@@ -46,10 +44,6 @@ class BackgroundServices:
         self.running = True
         logger.info("Starting background services...")
         
-        # Setup signal handlers for graceful shutdown
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            signal.signal(sig, self._signal_handler)
-        
         # Start background tasks
         self._tasks = [
             asyncio.create_task(self._stale_lock_recovery_loop()),
@@ -60,9 +54,8 @@ class BackgroundServices:
         
         logger.info("Background services started successfully")
         
-        # Wait for shutdown signal
+        # Wait until stop() is called
         await self._shutdown_event.wait()
-        await self.stop()
     
     async def stop(self):
         """Stop all background services gracefully."""
@@ -82,18 +75,14 @@ class BackgroundServices:
         
         logger.info("Background services stopped")
     
-    def _signal_handler(self, signum, frame):
-        """Handle shutdown signals."""
-        logger.info(f"Received signal {signum}, initiating shutdown...")
-        self._shutdown_event.set()
-    
     async def _stale_lock_recovery_loop(self):
         """
         Periodic stale lock recovery.
-        
-        Runs every 5 minutes to recover tasks from crashed workers.
+
+        Runs every 60 seconds to detect tasks whose worker closed/disconnected
+        and re-queue or move them to the dead letter queue.
         """
-        interval_seconds = 300  # 5 minutes
+        interval_seconds = 60  # 1 minute
         
         logger.info("Started stale lock recovery loop")
         

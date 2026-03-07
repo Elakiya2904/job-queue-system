@@ -38,6 +38,7 @@ class TaskResponse(BaseModel):
     failed_at: Optional[datetime] = Field(None, description="Task failure timestamp")
     locked_by: Optional[str] = Field(None, description="Worker ID that locked the task")
     locked_at: Optional[datetime] = Field(None, description="Task lock timestamp")
+    completed_by: Optional[str] = Field(None, description="Worker ID that completed the task")
     created_by: str = Field(..., description="User who created the task")
     correlation_id: Optional[str] = Field(None, description="Correlation ID")
     error_message: Optional[str] = Field(None, description="Error message if failed")

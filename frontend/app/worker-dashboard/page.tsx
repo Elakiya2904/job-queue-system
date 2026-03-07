@@ -43,7 +43,7 @@ export default function WorkerDashboardPage() {
   const [availableTasks, setAvailableTasks] = useState<Task[]>([])
   const [claimedTasks, setClaimedTasks] = useState<Task[]>([])
   const [loading, setLoading] = useState(true)
-  const [workerId, setWorkerId] = useState('worker_frontend_01')
+  const [workerId, setWorkerId] = useState('')
   const [taskTypes, setTaskTypes] = useState('email_processing,data_processing,notification')
   
   // Task execution dialog
@@ -51,6 +51,12 @@ export default function WorkerDashboardPage() {
   const [executionProgress, setExecutionProgress] = useState(0)
   const [executionStatus, setExecutionStatus] = useState('')
   const [executionResult, setExecutionResult] = useState('')
+  const [executionDone, setExecutionDone] = useState(false)
+
+  // Claim name dialog
+  const [pendingClaimTaskId, setPendingClaimTaskId] = useState<string | null>(null)
+  const [claimWorkerName, setClaimWorkerName] = useState('')
+  const [claimError, setClaimError] = useState('')
 
   const fetchAvailableTasks = async () => {
     try {
@@ -65,12 +71,12 @@ export default function WorkerDashboardPage() {
 
   const fetchClaimedTasks = async () => {
     try {
-      // Get only tasks locked by this specific worker
-      const response = await apiClient.getTasks({
-        status: 'in_progress',
-        locked_by: workerId,
-        limit: 50
-      })
+      // Only fetch if workerId is set
+      if (!workerId) {
+        setClaimedTasks([])
+        return
+      }
+      const response = await apiClient.getTasks({ status: 'in_progress', locked_by: workerId, limit: 50 })
       setClaimedTasks(response.tasks)
     } catch (error) {
       console.error('Failed to fetch claimed tasks:', error)
@@ -91,25 +97,46 @@ export default function WorkerDashboardPage() {
     return () => clearInterval(interval)
   }, [taskTypes, workerId])
 
-  const handleClaimTask = async (taskId: string) => {
+  const handleClaimTask = (taskId: string) => {
+    setPendingClaimTaskId(taskId)
+    setClaimWorkerName('')
+    setClaimError('')
+  }
+
+  const confirmClaimTask = async () => {
+    if (!pendingClaimTaskId || !claimWorkerName.trim()) return
+    const nameToUse = claimWorkerName.trim()
+    const taskIdToClaim = pendingClaimTaskId
+    setClaimError('')
     try {
-      const claim: WorkerTaskClaim = await apiClient.claimTask(taskId, {
-        worker_id: workerId,
+      const claim: WorkerTaskClaim = await apiClient.claimTask(taskIdToClaim, {
+        worker_id: nameToUse,
         lock_timeout: 300
       })
       
       console.log('🎯 Task claimed successfully:', claim)
+      // Only update workerId and close dialog on success
+      setWorkerId(nameToUse)
+      setPendingClaimTaskId(null)
       await refreshData()
       
       // Start executing the task
       setExecutingTask(claim.task)
       setExecutionProgress(0)
       setExecutionStatus('Task claimed, starting execution...')
+      setExecutionDone(false)
       executeTask(claim.task)
       
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to claim task:', error)
-      alert('Failed to claim task: ' + error)
+      const msg = error?.message || String(error)
+      // Keep dialog open with the error — task stays in queue
+      setClaimError(msg.includes('not registered')
+        ? `"${nameToUse}" is not a registered worker. Ask an admin to add you in Worker Management.`
+        : `Failed to claim task: ${msg}`
+      )
+      // Refresh so the task visibly stays in "Available Tasks"
+      await refreshData()
     }
   }
 
@@ -178,6 +205,7 @@ export default function WorkerDashboardPage() {
       })
       
       setExecutionStatus('✅ Task completed successfully!')
+      setExecutionDone(true)
       
       // Refresh data and close dialog after 2 seconds
       setTimeout(() => {
@@ -200,6 +228,7 @@ export default function WorkerDashboardPage() {
       }
       
       setExecutionStatus(`❌ Task failed: ${error}`)
+      setExecutionDone(true)
       setTimeout(() => {
         setExecutingTask(null)
         refreshData()
@@ -250,17 +279,7 @@ export default function WorkerDashboardPage() {
             title="Worker Dashboard" 
             description="Claim and process available tasks from the queue"
           />
-          <main className="flex-1 overflow-x-hidden overflow-y-auto bg-background p-6">
-            <div className="mb-6">
-              <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-                <User className="h-8 w-8" />
-                Worker Dashboard
-              </h1>
-              <p className="text-muted-foreground">
-                Claim and process available tasks from the queue
-              </p>
-            </div>
-
+          <main className="flex-1 overflow-x-hidden overflow-y-auto bg-background p-6 pt-8">
             {/* Worker Configuration */}
             <Card className="mb-6">
               <CardHeader>
@@ -412,8 +431,56 @@ export default function WorkerDashboardPage() {
               </Card>
             </div>
 
+            {/* Claim Name Dialog */}
+            <Dialog open={!!pendingClaimTaskId} onOpenChange={(open) => { if (!open) setPendingClaimTaskId(null) }}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Enter Your Name</DialogTitle>
+                  <DialogDescription>
+                    Please enter your name to claim this task. It will be recorded as the assigned worker.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="py-2">
+                  <Label htmlFor="claimName">Your Name</Label>
+                  <Input
+                    id="claimName"
+                    value={claimWorkerName}
+                    onChange={(e) => { setClaimWorkerName(e.target.value); setClaimError('') }}
+                    placeholder="e.g. John Smith"
+                    className="mt-1"
+                    onKeyDown={(e) => { if (e.key === 'Enter') confirmClaimTask() }}
+                    autoFocus
+                  />
+                  {claimError && (
+                    <p className="text-sm text-red-600 mt-2">{claimError}</p>
+                  )}
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setPendingClaimTaskId(null)}>Cancel</Button>
+                  <Button onClick={confirmClaimTask} disabled={!claimWorkerName.trim()}>
+                    Claim Task
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
             {/* Task Execution Dialog */}
-            <Dialog open={!!executingTask} onOpenChange={() => setExecutingTask(null)}>
+            <Dialog open={!!executingTask} onOpenChange={async () => {
+              if (executingTask && !executionDone) {
+                // Worker closed mid-execution — fail the task so it re-queues or goes to DLQ
+                try {
+                  await apiClient.failTask(executingTask.id, {
+                    worker_id: workerId,
+                    error_message: 'Worker closed task before completion',
+                    should_retry: true
+                  })
+                } catch (e) {
+                  console.error('Failed to fail task on close:', e)
+                }
+                await refreshData()
+              }
+              setExecutingTask(null)
+            }}>
               <DialogContent>
                 <DialogHeader>
                   <DialogTitle>Executing Task</DialogTitle>
@@ -453,10 +520,23 @@ export default function WorkerDashboardPage() {
                 <DialogFooter>
                   <Button 
                     variant="outline" 
-                    onClick={() => setExecutingTask(null)}
-                    disabled={executionProgress > 0 && executionProgress < 100}
+                    onClick={async () => {
+                      if (executingTask && !executionDone) {
+                        try {
+                          await apiClient.failTask(executingTask.id, {
+                            worker_id: workerId,
+                            error_message: 'Worker closed task before completion',
+                            should_retry: true
+                          })
+                        } catch (e) {
+                          console.error('Failed to fail task on close:', e)
+                        }
+                        await refreshData()
+                      }
+                      setExecutingTask(null)
+                    }}
                   >
-                    Close
+                    {executionDone ? 'Close' : 'Close (Fail Task)'}
                   </Button>
                 </DialogFooter>
               </DialogContent>

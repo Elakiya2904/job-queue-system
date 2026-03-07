@@ -126,10 +126,10 @@ export function TaskDetailsDrawer({ task, open, onOpenChange, onRetry, onCancel 
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <p className="text-sm font-medium text-gray-600 mb-1">Assigned Worker</p>
+                  <p className="text-sm font-medium text-gray-600 mb-1">{task.completed_by ? 'Completed By' : 'Assigned Worker'}</p>
                   <div className="flex items-center gap-2">
                     <User className="w-4 h-4 text-gray-400" />
-                    <span className="text-base">{task.locked_by || 'Unassigned'}</span>
+                    <span className="text-base">{task.completed_by || task.locked_by || 'Unassigned'}</span>
                   </div>
                 </div>
                 

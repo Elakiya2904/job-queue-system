@@ -1,5 +1,5 @@
 'use client'
-
+// REWRITTEN — comprehensive worker management page
 import { useState, useMemo, useEffect } from 'react'
 import { Sidebar } from '@/components/sidebar'
 import { Header } from '@/components/header'
@@ -26,6 +26,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Label } from '@/components/ui/label'
 import { 
   Search, 
   RefreshCw, 
@@ -44,7 +53,9 @@ import {
   Settings,
   Eye,
   TrendingUp,
-  Users
+  Users,
+  UserPlus,
+  Trash2
 } from 'lucide-react'
 import { useAuth } from '@/app/auth-context'
 import { useRouter } from 'next/navigation'
@@ -57,6 +68,13 @@ export default function WorkersPage() {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [loading, setLoading] = useState(true)
   const [selectedWorker, setSelectedWorker] = useState<Worker | null>(null)
+  const [addWorkerOpen, setAddWorkerOpen] = useState(false)
+  const [newWorkerName, setNewWorkerName] = useState('')
+  const [newWorkerCapabilities, setNewWorkerCapabilities] = useState('email_processing,data_processing,notification')
+  const [addWorkerError, setAddWorkerError] = useState('')
+  const [addWorkerLoading, setAddWorkerLoading] = useState(false)
+  const [workerTasks, setWorkerTasks] = useState<any[]>([])
+  const [workerTasksLoading, setWorkerTasksLoading] = useState(false)
   const { user } = useAuth()
   const router = useRouter()
 
@@ -178,6 +196,54 @@ export default function WorkersPage() {
     setSearchQuery('')
   }
 
+  const handleAddWorker = async () => {
+    if (!newWorkerName.trim()) return
+    setAddWorkerLoading(true)
+    setAddWorkerError('')
+    try {
+      const caps = newWorkerCapabilities.split(',').map(c => c.trim()).filter(Boolean)
+      // Generate a 36-char UUID as the api_key (satisfies min_length=32)
+      const apiKey = crypto.randomUUID() + crypto.randomUUID().slice(0, 4)
+      await apiClient.registerWorker({
+        worker_id: newWorkerName.trim(),
+        capabilities: caps.length > 0 ? caps : ['data_processing'],
+        api_key: apiKey,
+      })
+      setAddWorkerOpen(false)
+      setNewWorkerName('')
+      setNewWorkerCapabilities('email_processing,data_processing,notification')
+      await fetchWorkers()
+    } catch (err: any) {
+      setAddWorkerError(err?.message || 'Failed to register worker')
+    } finally {
+      setAddWorkerLoading(false)
+    }
+  }
+
+  const handleDeleteWorker = async (workerId: string) => {
+    if (!confirm(`Delete worker "${workerId}"? This cannot be undone.`)) return
+    try {
+      await apiClient.deleteWorker(workerId)
+      if (selectedWorker?.id === workerId) setSelectedWorker(null)
+      await fetchWorkers()
+    } catch (err: any) {
+      alert(`Failed to delete worker: ${err?.message || 'Unknown error'}`)
+    }
+  }
+
+  useEffect(() => {
+    if (!selectedWorker) { setWorkerTasks([]); return }
+    setWorkerTasksLoading(true)
+    Promise.all([
+      apiClient.getTasks({ locked_by: selectedWorker.id, limit: 100 }),
+      apiClient.getTasks({ completed_by: selectedWorker.id, limit: 100 }),
+    ]).then(([inProgress, completed]) => {
+      const all = [...inProgress.tasks, ...completed.tasks]
+      const seen = new Set<string>()
+      setWorkerTasks(all.filter(t => { if (seen.has(t.id)) return false; seen.add(t.id); return true }))
+    }).catch(() => {}).finally(() => setWorkerTasksLoading(false))
+  }, [selectedWorker])
+
   return (
     <ProtectedRoute requiredRole="admin">
       <div className="flex h-screen bg-gray-50">
@@ -189,14 +255,24 @@ export default function WorkersPage() {
                 title="Worker Management"
                 description="Monitor and manage all system workers"
               />
-              <Button 
-                onClick={handleRefresh} 
-                disabled={isRefreshing}
-                className="flex items-center gap-2"
-              >
-                <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-                Refresh
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  onClick={() => { setAddWorkerError(''); setAddWorkerOpen(true) }}
+                  className="flex items-center gap-2"
+                >
+                  <UserPlus className="w-4 h-4" />
+                  Add Worker
+                </Button>
+                <Button 
+                  onClick={handleRefresh} 
+                  disabled={isRefreshing}
+                  variant="outline"
+                  className="flex items-center gap-2"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+                  Refresh
+                </Button>
+              </div>
             </div>
 
             {loading && workers.length === 0 ? (
@@ -444,7 +520,7 @@ export default function WorkersPage() {
                                   size="sm"
                                   onClick={() => setSelectedWorker(worker)}
                                   className="h-8 w-8 p-0"
-                                  title="View details"
+                                  title="View details & tasks"
                                 >
                                   <Eye className="w-4 h-4" />
                                 </Button>
@@ -474,11 +550,11 @@ export default function WorkersPage() {
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  onClick={() => handleWorkerAction(worker.id, 'configure')}
-                                  className="h-8 w-8 p-0 text-gray-600 hover:text-gray-900 hover:bg-gray-50"
-                                  title="Configure worker"
+                                  onClick={() => handleDeleteWorker(worker.id)}
+                                  className="h-8 w-8 p-0 text-red-600 hover:text-red-900 hover:bg-red-50"
+                                  title="Delete worker"
                                 >
-                                  <Settings className="w-4 h-4" />
+                                  <Trash2 className="w-4 h-4" />
                                 </Button>
                               </div>
                             </TableCell>
@@ -505,26 +581,33 @@ export default function WorkersPage() {
               </CardContent>
             </Card>
 
-            {/* Worker Details Modal/Drawer would go here */}
+            {/* Worker Details Modal */}
             {selectedWorker && (
               <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-                <Card className="w-full max-w-2xl max-h-[80vh] overflow-auto">
+                <Card className="w-full max-w-3xl max-h-[85vh] overflow-auto">
                   <CardHeader>
                     <div className="flex items-center justify-between">
                       <CardTitle className="flex items-center gap-2">
                         <Server className="w-5 h-5" />
-                        Worker Details: {selectedWorker.id}
+                        {selectedWorker.id}
                       </CardTitle>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setSelectedWorker(null)}
-                      >
-                        <XCircle className="w-4 h-4" />
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDeleteWorker(selectedWorker.id)}
+                          className="text-red-600 hover:text-red-900 hover:bg-red-50"
+                        >
+                          <Trash2 className="w-4 h-4 mr-1" /> Delete
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => setSelectedWorker(null)}>
+                          <XCircle className="w-4 h-4" />
+                        </Button>
+                      </div>
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-6">
+                    {/* Worker Info */}
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <label className="text-sm font-medium text-gray-600">Status</label>
@@ -535,33 +618,69 @@ export default function WorkersPage() {
                         </div>
                       </div>
                       <div>
-                        <label className="text-sm font-medium text-gray-600">Version</label>
-                        <p className="mt-1 text-sm">{selectedWorker.version}</p>
+                        <label className="text-sm font-medium text-gray-600">Tasks Processed</label>
+                        <p className="mt-1 text-lg font-semibold">{selectedWorker.tasks_processed.toLocaleString()}</p>
                       </div>
                     </div>
-                    
+
                     <div>
                       <label className="text-sm font-medium text-gray-600">Capabilities</label>
                       <div className="mt-2 flex flex-wrap gap-2">
                         {selectedWorker.capabilities?.map((cap) => (
-                          <Badge key={cap} variant="outline" className="text-xs">
-                            {cap}
-                          </Badge>
+                          <Badge key={cap} variant="outline" className="text-xs">{cap}</Badge>
                         ))}
                       </div>
                     </div>
-                    
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-sm font-medium text-gray-600">Tasks Processed</label>
-                        <p className="mt-1 text-lg font-semibold">{selectedWorker.tasks_processed.toLocaleString()}</p>
-                      </div>
-                      <div>
-                        <label className="text-sm font-medium text-gray-600">Uptime</label>
-                        <p className="mt-1 text-lg font-semibold">
-                          {selectedWorker.uptime ? formatUptime(selectedWorker.uptime) : 'Unknown'}
-                        </p>
-                      </div>
+
+                    {/* Worker Tasks */}
+                    <div>
+                      <label className="text-sm font-medium text-gray-600 mb-3 block">Task History</label>
+                      {workerTasksLoading ? (
+                        <div className="flex items-center justify-center py-6">
+                          <Loader className="w-5 h-5 animate-spin text-gray-400 mr-2" />
+                          <span className="text-sm text-gray-500">Loading tasks…</span>
+                        </div>
+                      ) : workerTasks.length === 0 ? (
+                        <div className="text-center py-6 text-gray-400 text-sm border rounded-lg">
+                          No tasks assigned to this worker yet.
+                        </div>
+                      ) : (
+                        <div className="border rounded-lg overflow-hidden">
+                          <Table>
+                            <TableHeader>
+                              <TableRow className="bg-gray-50">
+                                <TableHead className="text-xs font-medium py-2">Task ID</TableHead>
+                                <TableHead className="text-xs font-medium py-2">Type</TableHead>
+                                <TableHead className="text-xs font-medium py-2">Status</TableHead>
+                                <TableHead className="text-xs font-medium py-2">Created</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {workerTasks.map((task) => (
+                                <TableRow key={task.id} className="text-sm">
+                                  <TableCell className="py-2 font-mono text-xs text-gray-700">
+                                    {task.id.slice(0, 20)}…
+                                  </TableCell>
+                                  <TableCell className="py-2">
+                                    <Badge variant="outline" className="text-xs">{task.type}</Badge>
+                                  </TableCell>
+                                  <TableCell className="py-2">
+                                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                                      task.status === 'completed' ? 'bg-green-100 text-green-700' :
+                                      task.status === 'in_progress' ? 'bg-blue-100 text-blue-700' :
+                                      task.status === 'failed' ? 'bg-red-100 text-red-700' :
+                                      'bg-gray-100 text-gray-700'
+                                    }`}>{task.status}</span>
+                                  </TableCell>
+                                  <TableCell className="py-2 text-xs text-gray-500">
+                                    {new Date(task.created_at).toLocaleString()}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
@@ -572,6 +691,52 @@ export default function WorkersPage() {
           </div>
         </main>
       </div>
+
+      {/* Add Worker Dialog */}
+      <Dialog open={addWorkerOpen} onOpenChange={(open) => { if (!open) setAddWorkerOpen(false) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add Worker</DialogTitle>
+            <DialogDescription>
+              Register a new worker. Only registered workers can claim tasks.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <Label htmlFor="newWorkerName">Worker Name / ID</Label>
+              <Input
+                id="newWorkerName"
+                value={newWorkerName}
+                onChange={(e) => setNewWorkerName(e.target.value)}
+                placeholder="e.g. John Smith"
+                className="mt-1"
+                autoFocus
+                onKeyDown={(e) => { if (e.key === 'Enter') handleAddWorker() }}
+              />
+            </div>
+            <div>
+              <Label htmlFor="newWorkerCaps">Capabilities (comma-separated)</Label>
+              <Input
+                id="newWorkerCaps"
+                value={newWorkerCapabilities}
+                onChange={(e) => setNewWorkerCapabilities(e.target.value)}
+                placeholder="email_processing,data_processing,notification"
+                className="mt-1"
+              />
+              <p className="text-xs text-muted-foreground mt-1">Task types this worker is allowed to process</p>
+            </div>
+            {addWorkerError && (
+              <p className="text-sm text-red-600">{addWorkerError}</p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddWorkerOpen(false)}>Cancel</Button>
+            <Button onClick={handleAddWorker} disabled={!newWorkerName.trim() || addWorkerLoading}>
+              {addWorkerLoading ? 'Registering...' : 'Add Worker'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </ProtectedRoute>
   )
 }

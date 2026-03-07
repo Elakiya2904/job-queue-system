@@ -51,6 +51,7 @@ export default function DeadLetterQueuePage() {
   const [loading, setLoading] = useState(true)
   const [selectedTask, setSelectedTask] = useState<DeadLetterTask | null>(null)
   const [retryDialogOpen, setRetryDialogOpen] = useState(false)
+  const [detailsDialogOpen, setDetailsDialogOpen] = useState(false)
   const [retryResetCount, setRetryResetCount] = useState(true)
   const [retryNewPriority, setRetryNewPriority] = useState<number | ''>('')
 
@@ -127,17 +128,7 @@ export default function DeadLetterQueuePage() {
             title="Dead Letter Queue" 
             description="Manage tasks that have failed multiple times and need manual intervention"
           />
-          <main className="flex-1 overflow-x-hidden overflow-y-auto bg-background p-6">
-            <div className="mb-6">
-              <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-                <AlertTriangle className="h-8 w-8 text-red-500" />
-                Dead Letter Queue
-              </h1>
-              <p className="text-muted-foreground">
-                Manage tasks that have failed multiple times and need manual intervention
-              </p>
-            </div>
-
+          <main className="flex-1 overflow-x-hidden overflow-y-auto bg-background p-6 pt-8">
             <Card>
               <CardHeader className="flex flex-row items-center justify-between">
                 <div>
@@ -231,7 +222,7 @@ export default function DeadLetterQueuePage() {
                                 variant="outline"
                                 onClick={() => {
                                   setSelectedTask(dlTask)
-                                  // Show task details in a modal (could be implemented)
+                                  setDetailsDialogOpen(true)
                                 }}
                               >
                                 <Eye className="h-3 w-3" />
@@ -245,6 +236,76 @@ export default function DeadLetterQueuePage() {
                 )}
               </CardContent>
             </Card>
+
+            {/* Task Details Dialog */}
+            <Dialog open={detailsDialogOpen} onOpenChange={setDetailsDialogOpen}>
+              <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2">
+                    <Eye className="h-5 w-5" />
+                    Task Details
+                  </DialogTitle>
+                  <DialogDescription>
+                    Full details for dead letter task
+                  </DialogDescription>
+                </DialogHeader>
+
+                {selectedTask && (
+                  <div className="space-y-4">
+                    <div className="bg-muted p-3 rounded-lg space-y-2 text-sm">
+                      <h4 className="font-semibold">Task Info</h4>
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                        <span className="font-medium text-muted-foreground">Task ID</span>
+                        <span className="font-mono break-all">{selectedTask.task_id}</span>
+                        <span className="font-medium text-muted-foreground">Type</span>
+                        <span>{selectedTask.original_task.type}</span>
+                        <span className="font-medium text-muted-foreground">Status</span>
+                        <span>{selectedTask.original_task.status}</span>
+                        <span className="font-medium text-muted-foreground">Priority</span>
+                        <span>{getPriorityBadge(selectedTask.original_task.priority).text} ({selectedTask.original_task.priority})</span>
+                        <span className="font-medium text-muted-foreground">Failures</span>
+                        <span className="text-red-600 font-medium">{selectedTask.failure_count} / {selectedTask.original_task.max_retries}</span>
+                        <span className="font-medium text-muted-foreground">Created At</span>
+                        <span>{formatDate(selectedTask.original_task.created_at)}</span>
+                        <span className="font-medium text-muted-foreground">Moved to DLQ</span>
+                        <span>{formatDate(selectedTask.moved_to_dlq_at)}</span>
+                      </div>
+                    </div>
+
+                    {selectedTask.last_error && (
+                      <div className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 p-3 rounded-lg space-y-1">
+                        <h4 className="font-semibold text-red-700 dark:text-red-400 text-sm">Last Error</h4>
+                        <p className="text-sm text-red-600 dark:text-red-300 break-words">{selectedTask.last_error}</p>
+                      </div>
+                    )}
+
+                    <div className="space-y-1">
+                      <h4 className="font-semibold text-sm">Payload</h4>
+                      <pre className="bg-muted p-3 rounded-lg text-xs overflow-x-auto whitespace-pre-wrap break-all">
+                        {JSON.stringify(selectedTask.original_task.payload, null, 2)}
+                      </pre>
+                    </div>
+
+                    {selectedTask.original_task.result && (
+                      <div className="space-y-1">
+                        <h4 className="font-semibold text-sm">Result</h4>
+                        <pre className="bg-muted p-3 rounded-lg text-xs overflow-x-auto whitespace-pre-wrap break-all">
+                          {JSON.stringify(selectedTask.original_task.result, null, 2)}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setDetailsDialogOpen(false)}>Close</Button>
+                  <Button onClick={() => { setDetailsDialogOpen(false); handleRetryTask(selectedTask!) }}>
+                    <RotateCcw className="h-4 w-4 mr-2" />
+                    Retry Task
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
 
             {/* Retry Task Dialog */}
             <Dialog open={retryDialogOpen} onOpenChange={setRetryDialogOpen}>

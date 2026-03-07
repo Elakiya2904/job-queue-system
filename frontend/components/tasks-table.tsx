@@ -20,6 +20,7 @@ interface TasksTableProps {
   tasks: Task[]
   onRetry?: (taskId: string) => void
   onDelete?: (taskId: string) => void
+
 }
 
 export function TasksTable({ tasks, onRetry, onDelete }: TasksTableProps) {
@@ -153,7 +154,7 @@ export function TasksTable({ tasks, onRetry, onDelete }: TasksTableProps) {
                     <div className="flex items-center gap-2">
                       <User className="w-4 h-4 text-gray-400" />
                       <span className="text-sm text-gray-700">
-                        {task.locked_by || 'Unassigned'}
+                        {task.completed_by || task.locked_by || 'Unassigned'}
                       </span>
                     </div>
                   </TableCell>

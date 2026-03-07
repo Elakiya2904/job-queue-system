@@ -78,7 +78,7 @@ export class JobQueueStack extends cdk.Stack {
     // RDS Aurora Serverless v2 PostgreSQL
     const dbCluster = new rds.DatabaseCluster(this, 'JobQueueDatabase', {
       engine: rds.DatabaseClusterEngine.auroraPostgres({
-        version: rds.AuroraPostgresEngineVersion.VER_15_4,
+        version: rds.AuroraPostgresEngineVersion.VER_14_7,
       }),
       credentials: rds.Credentials.fromGeneratedSecret('jobqueue_admin', {
         secretName: `job-queue-db-credentials-${environment}`,
@@ -113,7 +113,7 @@ export class JobQueueStack extends cdk.Stack {
     taskQueue.grantConsumeMessages(lambdaRole);
     deadLetterQueue.grantConsumeMessages(lambdaRole);
 
-    // Allow Lambda to access RDS
+    // Allow Lambda to access RDS credentials from Secrets Manager
     dbCluster.secret?.grantRead(lambdaRole);
 
     // API Lambda Function
@@ -125,7 +125,7 @@ export class JobQueueStack extends cdk.Stack {
       functionName: `job-queue-api-${environment}`,
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'lambda_handler.lambda_handler',
-      code: lambda.Code.fromAsset('../backend'), // Will be replaced in CI/CD
+      code: lambda.Code.fromAsset('../../backend'), // Backend application code
       vpc,
       vpcSubnets: {
         subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
@@ -135,10 +135,13 @@ export class JobQueueStack extends cdk.Stack {
       timeout: cdk.Duration.seconds(30),
       memorySize: 512,
       environment: {
-        DATABASE_URL: `postgresql://jobqueue_admin:password@${dbCluster.clusterEndpoint.hostname}:5432/jobqueue`,
+        DB_HOST: dbCluster.clusterEndpoint.hostname,
+        DB_PORT: '5432',
+        DB_NAME: 'jobqueue',
+        DB_USER: 'jobqueue_admin',
+        DB_SECRET_ARN: dbCluster.secret?.secretArn || '',
         SQS_QUEUE_URL: taskQueue.queueUrl,
         SQS_DLQ_URL: deadLetterQueue.queueUrl,
-        AWS_REGION: this.region,
         ENVIRONMENT: environment,
       },
       logGroup: logGroup,
@@ -149,7 +152,7 @@ export class JobQueueStack extends cdk.Stack {
       functionName: `job-queue-worker-${environment}`,
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'lambda_handler.lambda_handler',
-      code: lambda.Code.fromAsset('../worker'), // Will be replaced in CI/CD
+      code: lambda.Code.fromAsset('../../worker'), // Worker application code
       vpc,
       vpcSubnets: {
         subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
@@ -159,8 +162,13 @@ export class JobQueueStack extends cdk.Stack {
       timeout: cdk.Duration.minutes(15), // Long timeout for task processing
       memorySize: 1024,
       environment: {
-        DATABASE_URL: `postgresql://jobqueue_admin:password@${dbCluster.clusterEndpoint.hostname}:5432/jobqueue`,
-        AWS_REGION: this.region,
+        DB_HOST: dbCluster.clusterEndpoint.hostname,
+        DB_PORT: '5432',
+        DB_NAME: 'jobqueue',
+        DB_USER: 'jobqueue_admin',
+        DB_SECRET_ARN: dbCluster.secret?.secretArn || '',
+        SQS_QUEUE_URL: taskQueue.queueUrl,
+        SQS_DLQ_URL: deadLetterQueue.queueUrl,
         ENVIRONMENT: environment,
       },
       logGroup: logGroup,

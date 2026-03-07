@@ -56,7 +56,6 @@ def upgrade() -> None:
         sa.CheckConstraint('heartbeat_interval > 0', name='check_heartbeat_interval_positive'),
         sa.PrimaryKeyConstraint('id')
     )
-    op.create_index('idx_worker_capabilities', 'workers', ['capabilities'])
     op.create_index('idx_worker_current_task', 'workers', ['current_task_id'])
     op.create_index('idx_worker_performance', 'workers', ['tasks_processed', 'tasks_failed'])
     op.create_index('idx_worker_resources', 'workers', ['memory_usage', 'cpu_usage'])

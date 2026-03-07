@@ -156,12 +156,12 @@ export default function TasksPage() {
   }
 
   const handleDelete = async (taskId: string) => {
-    if (!confirm('Cancel this task? This cannot be undone.')) return
+    if (!confirm('Permanently delete this task? This cannot be undone.')) return
     try {
-      await apiClient.performTaskAction(taskId, 'cancel')
+      await apiClient.deleteTask(taskId)
       await fetchTasks()
     } catch (error: any) {
-      alert(`Failed to cancel task: ${error?.message || 'Unknown error'}`)
+      alert(`Failed to delete task: ${error?.message || 'Unknown error'}`)
     }
   }
 

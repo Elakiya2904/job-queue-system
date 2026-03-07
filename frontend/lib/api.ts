@@ -2,7 +2,7 @@
  * API client for Job Queue System
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8002'
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
 export interface Task {
   id: string
@@ -22,6 +22,7 @@ export interface Task {
   failed_at?: string
   locked_by?: string
   locked_at?: string
+  completed_by?: string
   created_by: string
   correlation_id?: string
   error_message?: string
@@ -158,6 +159,11 @@ class ApiClient {
         throw new Error(error.detail || `HTTP ${response.status}`)
       }
 
+      // 204 No Content — nothing to parse
+      if (response.status === 204 || response.headers.get('content-length') === '0') {
+        return undefined as unknown as T
+      }
+
       const result = await response.json()
       console.log(`[API] Success response:`, result)
       return result
@@ -189,6 +195,7 @@ class ApiClient {
     priority?: number
     created_by?: string
     locked_by?: string
+    completed_by?: string
     correlation_id?: string
     limit?: number
     offset?: number
@@ -352,7 +359,7 @@ class ApiClient {
     })
   }
 
-  async performTaskAction(taskId: string, action: 'cancel' | 'retry' | 'reschedule', scheduledFor?: string): Promise<Task> {
+  async performTaskAction(taskId: string, action: 'cancel' | 'retry' | 'reschedule' | 'reset', scheduledFor?: string): Promise<Task> {
     return this.request<Task>(`/tasks/${taskId}/actions`, {
       method: 'POST',
       body: JSON.stringify({ action, scheduled_for: scheduledFor })
@@ -371,6 +378,30 @@ class ApiClient {
 
     const query = searchParams.toString()
     return this.request<WorkerListApiResponse>(`/workers/${query ? '?' + query : ''}`)
+  }
+
+  async registerWorker(data: {
+    worker_id: string
+    capabilities: string[]
+    api_key: string
+    version?: string
+  }): Promise<{ worker_id: string; status: string; message: string }> {
+    return this.request('/workers/register', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    })
+  }
+
+  async deleteWorker(workerId: string): Promise<void> {
+    return this.request(`/workers/${encodeURIComponent(workerId)}`, {
+      method: 'DELETE'
+    })
+  }
+
+  async deleteTask(taskId: string): Promise<void> {
+    return this.request(`/tasks/${taskId}`, {
+      method: 'DELETE'
+    })
   }
 }
 
